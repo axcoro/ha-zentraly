@@ -1,0 +1,21 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Zentraly Account",
+        "description": "Enter your Zentraly app credentials",
+        "data": {
+          "email": "Email",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to Zentraly servers",
+      "invalid_auth": "Invalid email or password"
+    },
+    "abort": {
+      "already_configured": "Account is already configured"
+    }
+  }
+}

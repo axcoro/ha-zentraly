@@ -1,0 +1,21 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Cuenta Zentraly",
+        "description": "Ingresa tus credenciales de la app Zentraly",
+        "data": {
+          "email": "Email",
+          "password": "Contrasena"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "No se pudo conectar a los servidores de Zentraly",
+      "invalid_auth": "Email o contrasena incorrectos"
+    },
+    "abort": {
+      "already_configured": "La cuenta ya esta configurada"
+    }
+  }
+}
