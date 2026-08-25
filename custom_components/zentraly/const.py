@@ -9,6 +9,9 @@ API_BASE_URL = "https://ztprdrestservicesv2.azurewebsites.net"
 API_LOGIN_ENDPOINT = "/Login"
 API_APP_ENDPOINT = "/App"
 API_IOT_COMMAND_ENDPOINT = "/app/Action"
+API_FIREBASE_KEY = "f06d3a055c7066de31d6d1ae583d7bd18d99840bc74d14aaed63860054004f15"
+API_FIREBASE_IV = "eeed3a055c7066de31d6d1ae27017bd1"
+ZENTRALY_APP_VERSION = "7.1.6"
 
 # API operations
 DC_OPER_RUN_IOT = 28
