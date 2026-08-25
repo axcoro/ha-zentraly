@@ -176,6 +176,21 @@ class ZentralyApiTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ZentralyApiError, "device status 404"):
             await api.send_iot_command("serial-123", "getConfig", {"ids": []})
 
+    async def test_send_iot_command_increments_device_request_id(self) -> None:
+        session = FakeSession(
+            FakeResponse(200, {"numStatus": 0, "ioData": '{"status":200}'}),
+            FakeResponse(200, {"numStatus": 0, "ioData": '{"status":200}'}),
+        )
+        api = ZentralyApi(token="test-token", session=session)
+
+        await api.send_iot_command("serial-123", "getConfig", {"ids": []})
+        await api.send_iot_command("serial-123", "getConfig", {"ids": []})
+
+        self.assertEqual(
+            [0, 1],
+            [request["json"]["vioBody"]["data"]["rid"] for request in session.requests],
+        )
+
     async def test_get_devices_exposes_parent_iot_hub_device_id(self) -> None:
         session = FakeSession(
             FakeResponse(

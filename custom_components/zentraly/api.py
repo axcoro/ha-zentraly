@@ -60,6 +60,7 @@ class ZentralyApi:
         self._close_session = False
         self._device_guid = str(uuid.uuid4()).upper()
         self._request_counter = 0
+        self._command_rid = 0
 
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create aiohttp session."""
@@ -122,6 +123,12 @@ class ZentralyApi:
             headers["Authorization"] = f"{AUTH_PREFIX_TOKEN}{self._token}"
 
         return headers
+
+    def _get_next_command_rid(self) -> int:
+        """Return the next device command request ID used by the official app."""
+        rid = self._command_rid
+        self._command_rid = (rid + 1) % 10000
+        return rid
 
     async def authenticate(self) -> dict[str, Any]:
         """Authenticate and get token."""
@@ -245,7 +252,7 @@ class ZentralyApi:
             "timeOut": timeout,
             "data": {
                 "cmd": command,
-                "rid": 0,
+                "rid": self._get_next_command_rid(),
                 **data,
             }
         }
