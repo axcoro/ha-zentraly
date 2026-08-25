@@ -81,6 +81,9 @@ class ZentralyThermostat(CoordinatorEntity, ClimateEntity):
         super().__init__(coordinator)
         self._api = api
         self._device_serial = device["serial"]
+        self._iot_hub_device_id = (
+            device.get("iot_hub_device_id") or self._device_serial
+        )
         self._attr_unique_id = f"zentraly_{device['serial']}"
         self._attr_name = device.get("name", "Thermostat")
 
@@ -164,15 +167,15 @@ class ZentralyThermostat(CoordinatorEntity, ClimateEntity):
         if (temperature := kwargs.get(ATTR_TEMPERATURE)) is None:
             return
 
-        await self._api.set_target_temperature(self._device_serial, temperature)
+        await self._api.set_target_temperature(self._iot_hub_device_id, temperature)
         await self.coordinator.async_request_refresh()
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set HVAC mode."""
         if hvac_mode == HVACMode.HEAT:
-            await self._api.turn_on(self._device_serial)
+            await self._api.turn_on(self._iot_hub_device_id)
         elif hvac_mode == HVACMode.OFF:
-            await self._api.turn_off(self._device_serial)
+            await self._api.turn_off(self._iot_hub_device_id)
 
         await self.coordinator.async_request_refresh()
 

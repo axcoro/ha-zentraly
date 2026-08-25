@@ -4,13 +4,19 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import secrets
+import time
 import uuid
 from typing import Any
 
 import aiohttp
+from cryptography.hazmat.primitives import padding
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from .const import (
     API_BASE_URL,
+    API_FIREBASE_IV,
+    API_FIREBASE_KEY,
     API_LOGIN_ENDPOINT,
     API_APP_ENDPOINT,
     API_IOT_COMMAND_ENDPOINT,
@@ -21,6 +27,7 @@ from .const import (
     CONFIG_IDS,
     DC_OPER_RUN_IOT,
     TEMP_SCALE,
+    ZENTRALY_APP_VERSION,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -52,6 +59,8 @@ class ZentralyApi:
         self._user_id: int | None = None
         self._close_session = False
         self._device_guid = str(uuid.uuid4()).upper()
+        self._request_counter = 0
+        self._command_rid = 0
 
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create aiohttp session."""
@@ -70,14 +79,34 @@ class ZentralyApi:
         firebase_data = {
             "ivstrUserFBToken": "ha_integration_dummy_token",
             "ivstrUserGuid": self._device_guid,
-            "ivstrUserZtVersion": "7.0.3",
-            "ivnroUserMobileOS": 3,  # 3 for "other" / integration
+            "ivstrUserZtVersion": ZENTRALY_APP_VERSION,
+            "ivnroUserMobileOS": 1,
             "ivstrUserMobileTrade": "HomeAssistant",
             "ivstrUserMobileModel": "Integration",
             "ivstrUserMobileOSVersion": "1.0",
-            "ivstrUserLanguage": "es"
+            "ivstrUserLanguage": "es",
+            "ivstrUserCountry": "AR",
         }
-        return base64.b64encode(json.dumps(firebase_data).encode()).decode()
+        encoded_data = base64.b64encode(
+            json.dumps(firebase_data, separators=(",", ":")).encode()
+        ).decode()
+
+        self._request_counter += 1
+        request_data = {
+            "contador": self._request_counter,
+            "random": secrets.randbelow(100000),
+            "data": encoded_data,
+            "timestamp": int(time.time() * 1000) + secrets.randbelow(20001) - 10000,
+        }
+
+        key = bytes.fromhex(API_FIREBASE_KEY)
+        iv = bytes.fromhex(API_FIREBASE_IV)
+        padder = padding.PKCS7(algorithms.AES.block_size).padder()
+        plaintext = json.dumps(request_data, separators=(",", ":")).encode()
+        padded_plaintext = padder.update(plaintext) + padder.finalize()
+        encryptor = Cipher(algorithms.AES(key), modes.CBC(iv)).encryptor()
+        ciphertext = encryptor.update(padded_plaintext) + encryptor.finalize()
+        return base64.b64encode(ciphertext).decode()
 
     def _get_headers(self, auth_type: str = "token") -> dict[str, str]:
         """Get request headers."""
@@ -85,7 +114,7 @@ class ZentralyApi:
             "Content-Type": "application/json",
             "Accept": "application/json",
             "User-Agent": "zentralyRN/420",
-            "firebase": self._generate_firebase_header(),
+            "Firebase": self._generate_firebase_header(),
         }
 
         if auth_type == "login":
@@ -94,6 +123,12 @@ class ZentralyApi:
             headers["Authorization"] = f"{AUTH_PREFIX_TOKEN}{self._token}"
 
         return headers
+
+    def _get_next_command_rid(self) -> int:
+        """Return the next device command request ID used by the official app."""
+        rid = self._command_rid
+        self._command_rid = (rid + 1) % 10000
+        return rid
 
     async def authenticate(self) -> dict[str, Any]:
         """Authenticate and get token."""
@@ -173,6 +208,9 @@ class ZentralyApi:
 
                     devices.append({
                         "serial": device_model.get("ivstrDeviceSerial"),
+                        "iot_hub_device_id": device_model.get(
+                            "ivstrParentDeviceSerial"
+                        ),
                         "name": device_model.get("ivstrDeviceName"),
                         "mac": device_model.get("ivstrDeviceMac"),
                         "connected": device_model.get("ivblnDeviceConnected", False),
@@ -214,7 +252,7 @@ class ZentralyApi:
             "timeOut": timeout,
             "data": {
                 "cmd": command,
-                "rid": 0,
+                "rid": self._get_next_command_rid(),
                 **data,
             }
         }
@@ -240,6 +278,12 @@ class ZentralyApi:
             io_data = result.get("ioData", "{}")
             if isinstance(io_data, str):
                 io_data = json.loads(io_data)
+
+            device_status = io_data.get("status") if isinstance(io_data, dict) else None
+            if device_status != 200:
+                raise ZentralyApiError(
+                    f"Command failed: device status {device_status}"
+                )
 
             return io_data
 
