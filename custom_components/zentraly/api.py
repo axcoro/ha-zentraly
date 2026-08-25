@@ -201,6 +201,9 @@ class ZentralyApi:
 
                     devices.append({
                         "serial": device_model.get("ivstrDeviceSerial"),
+                        "iot_hub_device_id": device_model.get(
+                            "ivstrParentDeviceSerial"
+                        ),
                         "name": device_model.get("ivstrDeviceName"),
                         "mac": device_model.get("ivstrDeviceMac"),
                         "connected": device_model.get("ivblnDeviceConnected", False),
@@ -268,6 +271,12 @@ class ZentralyApi:
             io_data = result.get("ioData", "{}")
             if isinstance(io_data, str):
                 io_data = json.loads(io_data)
+
+            device_status = io_data.get("status") if isinstance(io_data, dict) else None
+            if device_status != 200:
+                raise ZentralyApiError(
+                    f"Command failed: device status {device_status}"
+                )
 
             return io_data
 

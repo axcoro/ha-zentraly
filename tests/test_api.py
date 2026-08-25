@@ -127,7 +127,7 @@ class ZentralyApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_send_iot_command_uses_app_action_envelope(self) -> None:
         session = FakeSession(
-            FakeResponse(200, {"numStatus": 0, "ioData": '{"status":0}'})
+            FakeResponse(200, {"numStatus": 0, "ioData": '{"status":200}'})
         )
         api = ZentralyApi(token="test-token", session=session)
 
@@ -137,7 +137,7 @@ class ZentralyApiTests(unittest.IsolatedAsyncioTestCase):
             {"ids": [{"targetTemp": 2150}]},
         )
 
-        self.assertEqual({"status": 0}, result)
+        self.assertEqual({"status": 200}, result)
         self.assertEqual(1, len(session.requests))
         request = session.requests[0]
         self.assertEqual(
@@ -166,6 +166,55 @@ class ZentralyApiTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(ZentralyApiError, "Command failed: 405"):
             await api.send_iot_command("serial-123", "getConfig", {"ids": []})
+
+    async def test_send_iot_command_reports_device_errors(self) -> None:
+        session = FakeSession(
+            FakeResponse(200, {"numStatus": 0, "ioData": '{"status":404}'})
+        )
+        api = ZentralyApi(token="test-token", session=session)
+
+        with self.assertRaisesRegex(ZentralyApiError, "device status 404"):
+            await api.send_iot_command("serial-123", "getConfig", {"ids": []})
+
+    async def test_get_devices_exposes_parent_iot_hub_device_id(self) -> None:
+        session = FakeSession(
+            FakeResponse(
+                200,
+                {
+                    "numStatus": 0,
+                    "ioData": {
+                        "ioUser": {
+                            "coUbications": [
+                                {
+                                    "ioDCModel": {"ivstrUbicationName": "Casa"},
+                                    "coZones": [
+                                        {
+                                            "ioDCModel": {"ivstrZoneName": "PA"},
+                                            "coDevices": [
+                                                {
+                                                    "ioDCModel": {
+                                                        "ivstrDeviceSerial": "thermostat-123",
+                                                        "ivstrParentDeviceSerial": "iot-hub-456",
+                                                    },
+                                                    "ioSubTypeObj": {"ioDCModel": {}},
+                                                }
+                                            ],
+                                        }
+                                    ],
+                                }
+                            ]
+                        }
+                    },
+                },
+            )
+        )
+        api = ZentralyApi(token="test-token", session=session)
+        api._user_id = 42
+
+        devices = await api.get_devices()
+
+        self.assertEqual("thermostat-123", devices[0]["serial"])
+        self.assertEqual("iot-hub-456", devices[0]["iot_hub_device_id"])
 
     async def test_user_data_keeps_existing_app_contract(self) -> None:
         session = FakeSession(FakeResponse(200, {"numStatus": 0, "ioData": {}}))
