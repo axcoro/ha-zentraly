@@ -8,7 +8,10 @@ PLATFORMS = [Platform.CLIMATE]
 API_BASE_URL = "https://ztprdrestservicesv2.azurewebsites.net"
 API_LOGIN_ENDPOINT = "/Login"
 API_APP_ENDPOINT = "/App"
-API_IOT_COMMAND_ENDPOINT = "/IOTCommand/Run"
+API_IOT_COMMAND_ENDPOINT = "/app/Action"
+
+# API operations
+DC_OPER_RUN_IOT = 28
 
 # Auth prefixes
 AUTH_PREFIX_LOGIN = "ztv2Auth"

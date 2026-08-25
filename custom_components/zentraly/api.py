@@ -19,6 +19,7 @@ from .const import (
     CMD_GET_CONFIG,
     CMD_SET_CONFIG,
     CONFIG_IDS,
+    DC_OPER_RUN_IOT,
     TEMP_SCALE,
 )
 
@@ -208,7 +209,7 @@ class ZentralyApi:
 
         session = await self._get_session()
 
-        payload = {
+        command_payload = {
             "deviceId": device_serial,
             "timeOut": timeout,
             "data": {
@@ -216,6 +217,10 @@ class ZentralyApi:
                 "rid": 0,
                 **data,
             }
+        }
+        payload = {
+            "eDcOper": DC_OPER_RUN_IOT,
+            "vioBody": command_payload,
         }
 
         async with session.post(

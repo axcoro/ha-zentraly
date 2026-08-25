@@ -1,0 +1,149 @@
+"""Tests for the Zentraly API client."""
+from __future__ import annotations
+
+import importlib.util
+from pathlib import Path
+import sys
+import types
+import unittest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+PACKAGE_PATH = ROOT / "custom_components" / "zentraly"
+
+
+def _load_module(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load {name}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+custom_components = types.ModuleType("custom_components")
+custom_components.__path__ = [str(ROOT / "custom_components")]
+sys.modules.setdefault("custom_components", custom_components)
+
+zentraly_package = types.ModuleType("custom_components.zentraly")
+zentraly_package.__path__ = [str(PACKAGE_PATH)]
+sys.modules.setdefault("custom_components.zentraly", zentraly_package)
+
+aiohttp = types.ModuleType("aiohttp")
+aiohttp.ClientSession = object
+sys.modules.setdefault("aiohttp", aiohttp)
+
+homeassistant = types.ModuleType("homeassistant")
+homeassistant.__path__ = []
+sys.modules.setdefault("homeassistant", homeassistant)
+
+homeassistant_const = types.ModuleType("homeassistant.const")
+homeassistant_const.Platform = types.SimpleNamespace(CLIMATE="climate")
+sys.modules.setdefault("homeassistant.const", homeassistant_const)
+
+_load_module("custom_components.zentraly.const", PACKAGE_PATH / "const.py")
+api_module = _load_module("custom_components.zentraly.api", PACKAGE_PATH / "api.py")
+
+ZentralyApi = api_module.ZentralyApi
+ZentralyApiError = api_module.ZentralyApiError
+
+
+class FakeResponse:
+    """Minimal aiohttp response context manager."""
+
+    def __init__(self, status: int, data: dict) -> None:
+        self.status = status
+        self._data = data
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback) -> None:
+        return None
+
+    async def json(self) -> dict:
+        return self._data
+
+
+class FakeSession:
+    """Record requests and return queued responses."""
+
+    def __init__(self, *responses: FakeResponse) -> None:
+        self.responses = list(responses)
+        self.requests: list[dict] = []
+
+    def post(self, url: str, *, headers: dict, json: dict) -> FakeResponse:
+        self.requests.append({"url": url, "headers": headers, "json": json})
+        return self.responses.pop(0)
+
+
+class ZentralyApiTests(unittest.IsolatedAsyncioTestCase):
+    """Verify the reverse-engineered API contract."""
+
+    async def test_send_iot_command_uses_app_action_envelope(self) -> None:
+        session = FakeSession(
+            FakeResponse(200, {"numStatus": 0, "ioData": '{"status":0}'})
+        )
+        api = ZentralyApi(token="test-token", session=session)
+
+        result = await api.send_iot_command(
+            "serial-123",
+            "setConfig",
+            {"ids": [{"targetTemp": 2150}]},
+        )
+
+        self.assertEqual({"status": 0}, result)
+        self.assertEqual(1, len(session.requests))
+        request = session.requests[0]
+        self.assertEqual(
+            "https://ztprdrestservicesv2.azurewebsites.net/app/Action",
+            request["url"],
+        )
+        self.assertEqual(
+            {
+                "eDcOper": 28,
+                "vioBody": {
+                    "deviceId": "serial-123",
+                    "timeOut": 15000,
+                    "data": {
+                        "cmd": "setConfig",
+                        "rid": 0,
+                        "ids": [{"targetTemp": 2150}],
+                    },
+                },
+            },
+            request["json"],
+        )
+
+    async def test_send_iot_command_reports_http_errors(self) -> None:
+        session = FakeSession(FakeResponse(405, {}))
+        api = ZentralyApi(token="test-token", session=session)
+
+        with self.assertRaisesRegex(ZentralyApiError, "Command failed: 405"):
+            await api.send_iot_command("serial-123", "getConfig", {"ids": []})
+
+    async def test_user_data_keeps_existing_app_contract(self) -> None:
+        session = FakeSession(FakeResponse(200, {"numStatus": 0, "ioData": {}}))
+        api = ZentralyApi(token="test-token", session=session)
+        api._user_id = 42
+
+        await api.get_user_data()
+
+        request = session.requests[0]
+        self.assertEqual(
+            "https://ztprdrestservicesv2.azurewebsites.net/App",
+            request["url"],
+        )
+        self.assertEqual(
+            {
+                "coUbications": [],
+                "eDcOper": 1,
+                "ioDCModel": {"ivlngUser": 42},
+            },
+            request["json"],
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
