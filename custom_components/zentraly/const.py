@@ -61,3 +61,4 @@ SCAN_INTERVAL_SECONDS = 60
 # Conf keys
 CONF_USER_ID = "user_id"
 CONF_TOKEN = "token"
+CONF_DEVICE_GUID = "device_guid"

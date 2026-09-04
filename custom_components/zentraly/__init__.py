@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
@@ -11,7 +12,7 @@ from homeassistant.helpers import aiohttp_client
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import ZentralyApi, ZentralyApiError
-from .const import DOMAIN, PLATFORMS, SCAN_INTERVAL_SECONDS
+from .const import CONF_DEVICE_GUID, DOMAIN, PLATFORMS, SCAN_INTERVAL_SECONDS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -19,11 +20,16 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Zentraly from a config entry."""
     session = aiohttp_client.async_get_clientsession(hass)
+    # Existing entries keep the same identity across reloads and HA restarts.
+    device_guid = entry.data.get(CONF_DEVICE_GUID) or str(
+        uuid.uuid5(uuid.NAMESPACE_URL, f"{DOMAIN}:{entry.entry_id}")
+    ).upper()
 
     api = ZentralyApi(
         email=entry.data[CONF_EMAIL],
         password=entry.data[CONF_PASSWORD],
         session=session,
+        device_guid=device_guid,
     )
 
     # Authenticate

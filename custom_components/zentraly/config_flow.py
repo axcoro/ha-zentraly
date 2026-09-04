@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import Any
 
 import voluptuous as vol
@@ -12,7 +13,7 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import aiohttp_client
 
 from .api import ZentralyApi, ZentralyAuthError
-from .const import DOMAIN
+from .const import CONF_DEVICE_GUID, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,10 +38,12 @@ class ZentralyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             session = aiohttp_client.async_get_clientsession(self.hass)
+            device_guid = str(uuid.uuid4()).upper()
             api = ZentralyApi(
                 email=user_input[CONF_EMAIL],
                 password=user_input[CONF_PASSWORD],
                 session=session,
+                device_guid=device_guid,
             )
 
             try:
@@ -55,6 +58,7 @@ class ZentralyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     data={
                         CONF_EMAIL: user_input[CONF_EMAIL],
                         CONF_PASSWORD: user_input[CONF_PASSWORD],
+                        CONF_DEVICE_GUID: device_guid,
                     },
                 )
             except ZentralyAuthError:
