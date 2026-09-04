@@ -50,6 +50,7 @@ class ZentralyApi:
         password: str | None = None,
         token: str | None = None,
         session: aiohttp.ClientSession | None = None,
+        device_guid: str | None = None,
     ) -> None:
         """Initialize the API client."""
         self._email = email
@@ -58,7 +59,7 @@ class ZentralyApi:
         self._session = session
         self._user_id: int | None = None
         self._close_session = False
-        self._device_guid = str(uuid.uuid4()).upper()
+        self._device_guid = device_guid or str(uuid.uuid4()).upper()
         self._request_counter = 0
         self._command_rid = 0
 
@@ -77,7 +78,8 @@ class ZentralyApi:
     def _generate_firebase_header(self) -> str:
         """Generate Firebase header for API requests."""
         firebase_data = {
-            "ivstrUserFBToken": "ha_integration_dummy_token",
+            # The app falls back to its device ID when Firebase is unavailable.
+            "ivstrUserFBToken": self._device_guid,
             "ivstrUserGuid": self._device_guid,
             "ivstrUserZtVersion": ZENTRALY_APP_VERSION,
             "ivnroUserMobileOS": 1,

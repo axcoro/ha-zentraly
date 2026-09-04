@@ -84,6 +84,21 @@ class FakeSession:
         self.requests.append({"url": url, "headers": headers, "json": json})
         return self.responses.pop(0)
 
+    def get(self, url: str, *, headers: dict) -> FakeResponse:
+        self.requests.append({"url": url, "headers": headers})
+        return self.responses.pop(0)
+
+
+def decode_firebase_header(header: str) -> dict:
+    decryptor = Cipher(
+        algorithms.AES(bytes.fromhex(const_module.API_FIREBASE_KEY)),
+        modes.CBC(bytes.fromhex(const_module.API_FIREBASE_IV)),
+    ).decryptor()
+    padded = decryptor.update(base64.b64decode(header)) + decryptor.finalize()
+    unpadder = padding.PKCS7(128).unpadder()
+    envelope = json.loads(unpadder.update(padded) + unpadder.finalize())
+    return json.loads(base64.b64decode(envelope["data"]))
+
 
 class ZentralyApiTests(unittest.IsolatedAsyncioTestCase):
     """Verify the reverse-engineered API contract."""
@@ -112,8 +127,28 @@ class ZentralyApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(12345, encrypted_envelope["random"])
         self.assertEqual(1_749_999_996_790, encrypted_envelope["timestamp"])
         self.assertEqual("TEST-GUID", firebase_data["ivstrUserGuid"])
+        self.assertEqual("TEST-GUID", firebase_data["ivstrUserFBToken"])
         self.assertEqual("7.1.6", firebase_data["ivstrUserZtVersion"])
         self.assertEqual("AR", firebase_data["ivstrUserCountry"])
+
+    async def test_login_reuses_installation_identity_after_client_recreation(self) -> None:
+        device_guid = "B32032E5-03E4-42C8-9ED4-062D81357C53"
+        for _ in range(2):
+            session = FakeSession(FakeResponse(200, {
+                "numStatus": 0,
+                "ioData": {"ivstrToken": "test-session-token", "ioUser": {"ioDCModel": {"ivlngUser": 1}}},
+            }))
+            api = ZentralyApi(
+                email="test@example.invalid", password="test-password",
+                session=session, device_guid=device_guid,
+            )
+            await api.authenticate()
+            request = session.requests[0]
+            self.assertEqual("https://ztprdrestservicesv2.azurewebsites.net/Login", request["url"])
+            fields = decode_firebase_header(request["headers"]["Firebase"])
+            self.assertEqual(device_guid, fields["ivstrUserGuid"])
+            self.assertEqual(device_guid, fields["ivstrUserFBToken"])
+            self.assertEqual("HomeAssistant", fields["ivstrUserMobileTrade"])
 
     def test_firebase_counter_increments_per_request(self) -> None:
         api = ZentralyApi()
