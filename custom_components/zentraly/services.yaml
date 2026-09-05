@@ -1,0 +1,123 @@
+refresh_device:
+  name: Refresh device
+  description: Refresh Zentraly device data from the cloud snapshot and discard pending local advanced-setting drafts. This does not write to the device.
+  fields:
+    device_id:
+      name: Device
+      description: Optional Zentraly device to refresh. Leave empty to refresh all Zentraly devices.
+      required: false
+      selector:
+        device:
+          integration: zentraly
+apply_thermostat_advanced_settings:
+  name: Apply thermostat advanced settings
+  description: Apply one or more advanced ZTTIN01 thermostat settings in a writeAttr batch.
+  fields:
+    device_id:
+      name: Device
+      description: Zentraly thermostat device to configure.
+      required: true
+      selector:
+        device:
+          integration: zentraly
+    temperature_offset:
+      name: Temperature correction
+      required: false
+      selector:
+        number:
+          min: -6
+          max: 6
+          step: 0.1
+          unit_of_measurement: C
+    away_temperature:
+      name: Away temperature
+      required: false
+      selector:
+        number:
+          min: 5
+          max: 30
+          step: 0.5
+          unit_of_measurement: C
+    display_always_on:
+      name: Display always on
+      required: false
+      selector:
+        boolean:
+    display_brightness:
+      name: Display brightness
+      required: false
+      selector:
+        number:
+          min: 5
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+    display_type:
+      name: Display mode
+      required: false
+      selector:
+        select:
+          options:
+            - temperatura
+            - horario
+apply_boiler_settings:
+  name: Apply boiler settings
+  description: Apply one or more boiler settings in writeAttr batches grouped by cluster.
+  fields:
+    device_id:
+      name: Device
+      description: Zentraly boiler device to configure.
+      required: true
+      selector:
+        device:
+          integration: zentraly
+    boiler_h2o_temperature:
+      name: Domestic hot water temperature
+      required: false
+      selector:
+        number:
+          min: 30
+          max: 60
+          step: 1
+          unit_of_measurement: C
+    is_h2o_enabled:
+      name: Domestic hot water enabled
+      required: false
+      selector:
+        boolean:
+    boiler_heating_temperature:
+      name: Heating water temperature
+      required: false
+      selector:
+        number:
+          min: 30
+          max: 80
+          step: 1
+          unit_of_measurement: C
+    is_comfort_mode:
+      name: Comfort mode
+      required: false
+      selector:
+        boolean:
+    on_delay:
+      name: On delay
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 10
+          step: 1
+          unit_of_measurement: min
+    is_forced_on:
+      name: Boiler always on
+      required: false
+      selector:
+        boolean:
+    weather_type:
+      name: System type
+      required: false
+      selector:
+        select:
+          options:
+            - losa_radiante
+            - radiadores

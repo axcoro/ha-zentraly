@@ -30,7 +30,7 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
 class ZentralyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Zentraly."""
 
-    VERSION = 1
+    VERSION = 5
 
     async def async_step_reauth(self, entry_data: dict[str, Any]) -> FlowResult:
         """Recover the existing account using a valid official session."""
