@@ -1,11 +1,15 @@
 # Changelog
 
-## 1.1.1 (local candidate)
+## 1.1.0
 
-- Integrate upstream 1.0.4 (`834b587`) with ZTTIN01 and boiler support, seven platforms, advanced-setting readback and decoded schedule telemetry from the local 1.1.0 candidate.
-- Retain upstream's persistent installation identity in setup and configuration, replacing the fixed Firebase placeholder token. Keep the local mobile API contract version 7.2.0.
-- Preserve all nine upstream API regression cases and add setup/configuration identity lifecycle coverage. The complete offline suite passes 47 tests and 42 subtests.
-- Live authentication and device control have not been validated for this candidate. The upstream authentication limitation below remains relevant; passing offline tests does not establish cloud acceptance.
+- Add support for ZTTIN01 thermostats and ZTBIN01 boiler extensions while retaining legacy thermostat compatibility.
+- Add thermostat and boiler sensors, child lock, advanced settings, and manual refresh controls, with English and Spanish translations.
+- Add an explicit Apply configuration action for advanced settings, including grouped display settings and device readback confirmation. Unconfirmed changes remain pending; writes are not retried automatically.
+- Expose decoded thermostat schedules, the current scheduled temperature, and the next scheduled change as read-only telemetry.
+- Support mobile API 7.2.0 commands and route child-device commands through their parent when available, preserving Home Assistant device identities.
+- Correct mobile-trade login metadata and preserve a stable installation identity across reloads and restarts.
+- Expose refresh_device, apply_thermostat_advanced_settings, and apply_boiler_settings services for scripts and automations.
+- Expand regression coverage for authentication, device routing, advanced settings, schedules, and platform setup.
 
 ## 1.0.4
 

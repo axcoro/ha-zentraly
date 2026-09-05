@@ -6,7 +6,7 @@
 
 Unofficial Home Assistant integration for Zentraly thermostats and their boiler extension (PEISA/FV Group, Argentina).
 
-This branch contains a local 1.1.1 candidate based on upstream 1.0.4. Offline regression checks pass; live authentication and device control remain pending. See [CHANGELOG.md](CHANGELOG.md) for the upstream login limitation and integration details. The additional features on this branch are not yet available in the upstream HACS release.
+Version 1.1.0 adds ZTTIN01 thermostat and boiler-extension support, advanced settings, and schedule telemetry. See [CHANGELOG.md](CHANGELOG.md) for the changes.
 
 ## Supported devices
 
