@@ -115,7 +115,6 @@ class ZentralyApi:
             "ivstrUserGuid": self._device_guid,
             "ivstrUserZtVersion": ZENTRALY_APP_VERSION,
             "ivnroUserMobileOS": 1,
-            # Temporary user-selected compatibility value; not host detection.
             "ivstrUserMobileTrade": "Apple",
             "ivstrUserMobileModel": "Integration",
             "ivstrUserMobileOSVersion": "1.0",
