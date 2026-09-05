@@ -1,18 +1,23 @@
 # Zentraly Thermostat
 
-Home Assistant support for legacy Zentraly Wi-Fi thermostats, ZTTIN01 thermostats and the Zentraly boiler extension.
+Control your Zentraly WiFi thermostats from Home Assistant.
 
-## Highlights
+## Features
 
-- Climate, temperature, humidity and heating state
-- ZTTIN01 modes, away preset and lock
-- Read-only decoded weekly schedule
-- Semantic thermostat and boiler telemetry
-- Draft-based advanced settings with explicit apply and readback confirmation
-- Manual refresh and English/Spanish translations
+- View current temperature and humidity
+- Set target temperature
+- Turn heating on/off
+- Automatic device discovery
+- ZTTIN01 automatic mode, away preset and child lock
+- Read-only schedule and thermostat/boiler telemetry
+- Advanced settings with explicit Apply and device readback confirmation
+- Manual refresh and configuration services for scripts and automations
 
-Advanced fields remain pending when the device does not confirm the requested value. Writes are never retried automatically.
+## Requirements
 
-The Refresh button and `zentraly.refresh_device` service discard pending local advanced-setting drafts before refreshing; they do not write those drafts to the device.
+- Zentraly WiFi Thermostat (including ZTTIN01; associated ZTBIN01 boiler extensions are also supported)
+- Zentraly account (same credentials as the mobile app)
 
-After installation, add **Zentraly** from **Settings → Devices & services** and use the credentials from the Zentraly mobile app.
+## Setup
+
+After installation, add the integration via the Home Assistant UI and enter your Zentraly credentials.
