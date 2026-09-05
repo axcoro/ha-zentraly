@@ -17,5 +17,142 @@
     "abort": {
       "already_configured": "[%key:common::config_flow::abort::already_configured_account%]"
     }
+  },
+  "entity": {
+    "binary_sensor": {
+      "connected": {
+        "name": "Connected"
+      },
+      "heat_demand": {
+        "name": "Heat demand"
+      },
+      "is_on": {
+        "name": "On"
+      },
+      "is_opentherm_on": {
+        "name": "OpenTherm"
+      },
+      "schedule_mode_active": {
+        "name": "Schedule mode active"
+      }
+    },
+    "lock": {
+      "thermostat_lock": {
+        "name": "Lock"
+      }
+    },
+    "button": {
+      "apply_advanced_settings": {
+        "name": "Apply configuration"
+      },
+      "refresh": {
+        "name": "Refresh"
+      }
+    },
+    "number": {
+      "away_temperature": {
+        "name": "Away temperature"
+      },
+      "boiler_h2o_temperature": {
+        "name": "Domestic hot water temperature"
+      },
+      "boiler_heating_temperature": {
+        "name": "Heating water temperature"
+      },
+      "display_brightness": {
+        "name": "Display brightness"
+      },
+      "on_delay": {
+        "name": "On delay"
+      },
+      "target_temperature": {
+        "name": "Target temperature"
+      },
+      "temperature_offset": {
+        "name": "Temperature correction"
+      }
+    },
+    "select": {
+      "display_always_on": {
+        "name": "Display always on",
+        "state": {
+          "no": "No",
+          "yes": "Yes"
+        }
+      },
+      "display_type": {
+        "name": "Display mode",
+        "state": {
+          "horario": "Time",
+          "temperatura": "Temperature"
+        }
+      },
+      "is_comfort_mode": {
+        "name": "Comfort mode",
+        "state": {
+          "no": "No",
+          "yes": "Yes"
+        }
+      },
+      "is_forced_on": {
+        "name": "Boiler always on",
+        "state": {
+          "no": "No",
+          "yes": "Yes"
+        }
+      },
+      "is_h2o_enabled": {
+        "name": "Domestic hot water enabled",
+        "state": {
+          "no": "No",
+          "yes": "Yes"
+        }
+      },
+      "weather_type": {
+        "name": "System type",
+        "state": {
+          "losa_radiante": "Underfloor heating",
+          "radiadores": "Radiators"
+        }
+      },
+      "zentraly_mode": {
+        "name": "Zentraly mode",
+        "state": {
+          "auto": "Auto",
+          "away": "Away",
+          "manual": "Manual",
+          "off": "Off"
+        }
+      }
+    },
+    "sensor": {
+      "ambient_humidity": {
+        "name": "Ambient humidity"
+      },
+      "ambient_temperature": {
+        "name": "Ambient temperature"
+      },
+      "boiler_message": {
+        "name": "Boiler message"
+      },
+      "decoded_schedule": {
+        "name": "Today's schedule"
+      },
+      "firmware": {
+        "name": "Firmware"
+      },
+      "heating_demand_time_today": {
+        "name": "Heating demand time today"
+      },
+      "off_delay": {
+        "name": "Off delay"
+      },
+      "next_scheduled_change": {
+        "name": "Next scheduled change"
+      },
+      "scheduled_temperature": {
+        "name": "Current scheduled temperature"
+      }
+    }
   }
 }

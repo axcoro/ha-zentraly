@@ -17,5 +17,142 @@
     "abort": {
       "already_configured": "La cuenta ya esta configurada"
     }
+  },
+  "entity": {
+    "binary_sensor": {
+      "connected": {
+        "name": "Conectado"
+      },
+      "heat_demand": {
+        "name": "Demanda de calor"
+      },
+      "is_on": {
+        "name": "Encendido"
+      },
+      "is_opentherm_on": {
+        "name": "OpenTherm"
+      },
+      "schedule_mode_active": {
+        "name": "Modo cronograma activo"
+      }
+    },
+    "lock": {
+      "thermostat_lock": {
+        "name": "Bloqueo"
+      }
+    },
+    "button": {
+      "apply_advanced_settings": {
+        "name": "Aplicar configuracion"
+      },
+      "refresh": {
+        "name": "Recargar"
+      }
+    },
+    "number": {
+      "away_temperature": {
+        "name": "Temperatura fuera de casa"
+      },
+      "boiler_h2o_temperature": {
+        "name": "Temperatura sanitaria"
+      },
+      "boiler_heating_temperature": {
+        "name": "Temperatura agua calefaccion"
+      },
+      "display_brightness": {
+        "name": "Brillo display"
+      },
+      "on_delay": {
+        "name": "Retardo de encendido"
+      },
+      "target_temperature": {
+        "name": "Temperatura objetivo"
+      },
+      "temperature_offset": {
+        "name": "Correccion de temperatura"
+      }
+    },
+    "select": {
+      "display_always_on": {
+        "name": "Display siempre encendido",
+        "state": {
+          "no": "No",
+          "yes": "Si"
+        }
+      },
+      "display_type": {
+        "name": "Modo de visualizacion",
+        "state": {
+          "horario": "Horario",
+          "temperatura": "Temperatura"
+        }
+      },
+      "is_comfort_mode": {
+        "name": "Modo confort",
+        "state": {
+          "no": "No",
+          "yes": "Si"
+        }
+      },
+      "is_forced_on": {
+        "name": "Caldera siempre encendida",
+        "state": {
+          "no": "No",
+          "yes": "Si"
+        }
+      },
+      "is_h2o_enabled": {
+        "name": "Agua sanitaria habilitada",
+        "state": {
+          "no": "No",
+          "yes": "Si"
+        }
+      },
+      "weather_type": {
+        "name": "Tipo de sistema",
+        "state": {
+          "losa_radiante": "Losa radiante",
+          "radiadores": "Radiadores"
+        }
+      },
+      "zentraly_mode": {
+        "name": "Modo Zentraly",
+        "state": {
+          "auto": "Auto",
+          "away": "Ausente",
+          "manual": "Manual",
+          "off": "Apagado"
+        }
+      }
+    },
+    "sensor": {
+      "ambient_humidity": {
+        "name": "Humedad ambiente"
+      },
+      "ambient_temperature": {
+        "name": "Temperatura ambiente"
+      },
+      "boiler_message": {
+        "name": "Mensaje caldera"
+      },
+      "decoded_schedule": {
+        "name": "Programacion de hoy"
+      },
+      "firmware": {
+        "name": "Firmware"
+      },
+      "heating_demand_time_today": {
+        "name": "Tiempo de demanda de calor hoy"
+      },
+      "off_delay": {
+        "name": "Retardo de apagado"
+      },
+      "next_scheduled_change": {
+        "name": "Siguiente cambio programado"
+      },
+      "scheduled_temperature": {
+        "name": "Temperatura programada actual"
+      }
+    }
   }
 }
