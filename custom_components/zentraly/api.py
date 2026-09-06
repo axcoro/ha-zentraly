@@ -83,7 +83,7 @@ class ZentralyApi:
             "ivstrUserGuid": self._device_guid,
             "ivstrUserZtVersion": ZENTRALY_APP_VERSION,
             "ivnroUserMobileOS": 1,
-            "ivstrUserMobileTrade": "Apple",
+            "ivstrUserMobileTrade": "",
             "ivstrUserMobileModel": "Integration",
             "ivstrUserMobileOSVersion": "1.0",
             "ivstrUserLanguage": "es",
