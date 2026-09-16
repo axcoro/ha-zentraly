@@ -1,0 +1,2 @@
+cryptography==50.0.1
+voluptuous==0.16.0

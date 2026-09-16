@@ -8,14 +8,24 @@
           "email": "Email",
           "password": "Contrasena"
         }
+      },
+      "reauth_confirm": {
+        "title": "Reconectar Zentraly",
+        "description": "Ingresa una sesión vigente de tu cuenta de Zentraly. Se guardará en Home Assistant para reconectar automáticamente.",
+        "data": {
+          "session": "Sesión de Zentraly"
+        }
       }
     },
     "error": {
       "cannot_connect": "No se pudo conectar a los servidores de Zentraly",
-      "invalid_auth": "Email o contrasena incorrectos"
+      "invalid_auth": "Zentraly rechazó las credenciales o la sesión",
+      "invalid_session": "La sesión está incompleta o tiene un formato incorrecto",
+      "wrong_account": "La sesión pertenece a otra cuenta de Zentraly"
     },
     "abort": {
-      "already_configured": "La cuenta ya esta configurada"
+      "already_configured": "La cuenta ya esta configurada",
+      "reauth_successful": "Sesión actualizada"
     }
   }
 }
