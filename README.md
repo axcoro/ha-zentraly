@@ -6,6 +6,21 @@
 
 Home Assistant custom integration for **Zentraly WiFi Thermostats** (by PEISA/FV Group - Argentina).
 
+## Upgrade to 1.0.5
+
+Install **v1.0.5** through HACS and restart Home Assistant. Keep the existing
+Zentraly integration entry: it contains the saved session used for reconnection.
+The session and live-state repair previously installed manually is now included
+in the release, so installing this version does not overwrite it with 1.0.4 code.
+Home Assistant **2026.9.0 or later** is required.
+
+**Authentication limitation:** a new password-only login may still be rejected
+by Zentraly (`CK_UserFBTokens_strUserFBToken_NoHaIn`). The verified recovery path
+uses a valid session already stored in Home Assistant. If that session expires
+or is revoked, Home Assistant requests reauthentication. This release does not
+provide a supported automatic way to obtain a new official-app session. Do not
+delete an existing entry to troubleshoot a login failure.
+
 ## Features
 
 - Control your Zentraly thermostats from Home Assistant
@@ -71,7 +86,14 @@ The standard Home Assistant climate services are supported:
 
 ### Authentication Issues
 
-Make sure you're using the same credentials as your Zentraly mobile app. The integration uses the Zentraly cloud API.
+A saved session is reused automatically. If Home Assistant requests
+reauthentication, its masked session field accepts a JSON object with `token`,
+`user_id` (a positive integer), `firebase_token`, and `device_guid` for the same
+Zentraly account. The account is validated before the existing entry is updated.
+Treat this object as a password: never post it in issues or logs.
+
+Password-only login can still be rejected by the private service. A working
+official app session does not prove that a new login will succeed.
 
 ### Devices Not Showing
 
@@ -91,11 +113,19 @@ logger:
 
 ## Technical Details
 
-This integration was created by reverse-engineering the Zentraly mobile app API. It uses the official Zentraly cloud API hosted on Azure.
+This integration uses a private, reverse-engineered Zentraly API hosted on Azure.
+It is not a supported public API and may change without notice.
 
 **API Endpoint**: `https://ztprdrestservicesv2.azurewebsites.net`
 
-The thermostats communicate via Azure IoT Hub and the integration polls the cloud API for status updates.
+The integration polls live device configuration through Azure IoT Hub every
+60 seconds. It attempts local WebSocket transport only when the account declares
+it enabled and the device can be discovered. Otherwise it uses the cloud.
+The `data_source` attribute identifies the active transport. Local transport has
+not been validated on the ZTTWF01 devices used for the cloud recovery checks.
+
+See [CHANGELOG.md](CHANGELOG.md) and [RELEASING.md](RELEASING.md) for changes and
+the required publication checks.
 
 ## Contributing
 

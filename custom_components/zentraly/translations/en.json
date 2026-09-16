@@ -8,14 +8,24 @@
           "email": "Email",
           "password": "Password"
         }
+      },
+      "reauth_confirm": {
+        "title": "Reconnect Zentraly",
+        "description": "Enter a valid session from your Zentraly account. It will be saved in Home Assistant to reconnect automatically.",
+        "data": {
+          "session": "Zentraly session"
+        }
       }
     },
     "error": {
       "cannot_connect": "Failed to connect to Zentraly servers",
-      "invalid_auth": "Invalid email or password"
+      "invalid_auth": "Zentraly rejected the credentials or session",
+      "invalid_session": "The session is incomplete or incorrectly formatted",
+      "wrong_account": "The session belongs to a different Zentraly account"
     },
     "abort": {
-      "already_configured": "Account is already configured"
+      "already_configured": "Account is already configured",
+      "reauth_successful": "Session updated"
     }
   }
 }

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
 from typing import Any
 
 from homeassistant.components.climate import (
@@ -14,11 +13,11 @@ from homeassistant.components.climate import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     ATTR_TEMPERATURE,
-    CONF_EMAIL,
     UnitOfTemperature,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
     DataUpdateCoordinator,
@@ -28,9 +27,7 @@ from .api import ZentralyApi
 from .const import (
     DEVICE_TYPE_THERMOSTAT,
     DOMAIN,
-    HVAC_MODE_MAP,
-    HVAC_MODE_REVERSE,
-    SCAN_INTERVAL_SECONDS,
+    THERMOSTAT_MODE_OFF,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -56,7 +53,7 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-class ZentralyThermostat(CoordinatorEntity, ClimateEntity):
+class ZentralyThermostat(CoordinatorEntity, ClimateEntity, RestoreEntity):
     """Zentraly thermostat entity."""
 
     _attr_has_entity_name = True
@@ -86,6 +83,9 @@ class ZentralyThermostat(CoordinatorEntity, ClimateEntity):
         )
         self._attr_unique_id = f"zentraly_{device['serial']}"
         self._attr_name = device.get("name", "Thermostat")
+        self._last_heating_temperature: float | None = None
+        self._changing_mode = False
+        self._remember_heating_temperature()
 
         # Device info
         self._attr_device_info = {
@@ -95,6 +95,27 @@ class ZentralyThermostat(CoordinatorEntity, ClimateEntity):
             "model": "WiFi Thermostat",
             "sw_version": device.get("firmware"),
         }
+
+    async def async_added_to_hass(self) -> None:
+        """Recover the heating setpoint when the device starts in OFF mode."""
+        await super().async_added_to_hass()
+        if self._last_heating_temperature is None and (state := await self.async_get_last_state()):
+            value = state.attributes.get("last_heating_temperature")
+            if type(value) in (int, float) and self._attr_min_temp <= value <= self._attr_max_temp:
+                self._last_heating_temperature = value
+
+    @callback
+    def _remember_heating_temperature(self) -> None:
+        """OFF reports 5 C; keep the last target observed during heating mode."""
+        value = self.target_temperature
+        if (not self._changing_mode and self.available and self.hvac_mode == HVACMode.HEAT
+            and type(value) in (int, float) and self._attr_min_temp <= value <= self._attr_max_temp):
+            self._last_heating_temperature = value
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        self._remember_heating_temperature()
+        super()._handle_coordinator_update()
 
     @property
     def _device_data(self) -> dict[str, Any] | None:
@@ -128,14 +149,19 @@ class ZentralyThermostat(CoordinatorEntity, ClimateEntity):
         return None
 
     @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Expose the transport and retain the setpoint across power cycles."""
+        data = self._device_data
+        return {
+            "data_source": data.get("data_source", "cloud_snapshot") if data else "unavailable",
+            "last_heating_temperature": self._last_heating_temperature,
+        }
+
+    @property
     def hvac_mode(self) -> HVACMode:
         """Return current HVAC mode."""
         if data := self._device_data:
-            mode = data.get("mode", 1)
-            mode_str = HVAC_MODE_MAP.get(mode, "heat")
-            if mode_str == "heat":
-                return HVACMode.HEAT
-            elif mode_str == "off":
+            if data.get("mode") == THERMOSTAT_MODE_OFF:
                 return HVACMode.OFF
         return HVACMode.HEAT
 
@@ -143,23 +169,16 @@ class ZentralyThermostat(CoordinatorEntity, ClimateEntity):
     def hvac_action(self) -> HVACAction | None:
         """Return current HVAC action."""
         if data := self._device_data:
-            if not data.get("is_on", False):
+            if self.hvac_mode == HVACMode.OFF:
                 return HVACAction.OFF
-
-            current = data.get("current_temperature", 0)
-            target = data.get("target_temperature", 0)
-
-            if current < target:
-                return HVACAction.HEATING
-            else:
-                return HVACAction.IDLE
+            return HVACAction.HEATING if data.get("is_on") else HVACAction.IDLE
         return None
 
     @property
     def available(self) -> bool:
         """Return if entity is available."""
         if data := self._device_data:
-            return data.get("connected", False)
+            return super().available and data.get("connected", False)
         return False
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
@@ -168,14 +187,23 @@ class ZentralyThermostat(CoordinatorEntity, ClimateEntity):
             return
 
         await self._api.set_target_temperature(self._iot_hub_device_id, temperature)
+        self._last_heating_temperature = temperature
         await self.coordinator.async_request_refresh()
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set HVAC mode."""
-        if hvac_mode == HVACMode.HEAT:
-            await self._api.turn_on(self._iot_hub_device_id)
-        elif hvac_mode == HVACMode.OFF:
-            await self._api.turn_off(self._iot_hub_device_id)
+        self._remember_heating_temperature()
+        restore_target = self._last_heating_temperature if self.hvac_mode == HVACMode.OFF else None
+        self._changing_mode = True
+        try:
+            if hvac_mode == HVACMode.HEAT:
+                await self._api.turn_on(self._iot_hub_device_id)
+                if restore_target is not None:
+                    await self._api.set_target_temperature(self._iot_hub_device_id, restore_target)
+            elif hvac_mode == HVACMode.OFF:
+                await self._api.turn_off(self._iot_hub_device_id)
+        finally:
+            self._changing_mode = False
 
         await self.coordinator.async_request_refresh()
 

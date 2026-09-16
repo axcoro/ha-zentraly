@@ -44,16 +44,10 @@ CONFIG_IDS = [
     "service"
 ]
 
-# Thermostat modes (from API)
-# Mode 1 = Heat, Mode 4 = Off (based on captured traffic)
-HVAC_MODE_MAP = {
-    1: "heat",
-    2: "cool",  # Assuming
-    3: "auto",  # Assuming
-    4: "off"
-}
-
-HVAC_MODE_REVERSE = {v: k for k, v in HVAC_MODE_MAP.items()}
+# Wi-Fi wire modes, verified against Zentraly 7.2.0's setConfig generator.
+# Readback can report 4 during heating; only 0 represents OFF.
+THERMOSTAT_MODE_OFF = 0
+THERMOSTAT_MODE_MANUAL = 2
 
 # Update interval
 SCAN_INTERVAL_SECONDS = 60
@@ -61,4 +55,5 @@ SCAN_INTERVAL_SECONDS = 60
 # Conf keys
 CONF_USER_ID = "user_id"
 CONF_TOKEN = "token"
+CONF_FIREBASE_TOKEN = "firebase_token"
 CONF_DEVICE_GUID = "device_guid"
