@@ -2,6 +2,7 @@
 from homeassistant.const import Platform
 
 DOMAIN = "zentraly"
+DATA_REAUTH_DRAFTS = f"{DOMAIN}_reauth_drafts"
 SERVICE_REFRESH_DEVICE = "refresh_device"
 SERVICE_APPLY_THERMOSTAT_ADVANCED_SETTINGS = "apply_thermostat_advanced_settings"
 SERVICE_APPLY_BOILER_SETTINGS = "apply_boiler_settings"
@@ -149,3 +150,4 @@ SCAN_INTERVAL_SECONDS = 60
 CONF_USER_ID = "user_id"
 CONF_TOKEN = "token"
 CONF_DEVICE_GUID = "device_guid"
+CONF_FIREBASE_TOKEN = "firebase_token"

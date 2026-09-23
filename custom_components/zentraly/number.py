@@ -7,6 +7,7 @@ from typing import Any
 from homeassistant.components.number import NumberEntity, NumberEntityDescription
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, UnitOfTemperature
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import (
@@ -23,7 +24,7 @@ from .advanced import (
     THERMOSTAT_DISPLAY_BRIGHTNESS,
     THERMOSTAT_TEMPERATURE_OFFSET,
 )
-from .api import ZentralyApi, command_device_id
+from .api import ZentralyAuthError, ZentralyApi, command_device_id
 from .const import (
     BOILER_DEVICE_TYPES,
     DEVICE_TYPE_ZTTIN01_THERMOSTAT,
@@ -185,24 +186,28 @@ class ZentralyTargetTemperatureNumber(CoordinatorEntity, NumberEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         """Set target temperature."""
-        await self._api.set_zttin01_target_temperature(
-            self._command_device_id,
-            self._device_mac,
-            self._endpoint_id,
-            value,
-        )
-        await refresh_zttin01_after_write(
-            self._api,
-            self.coordinator,
-            self._device_serial,
-            self._device_mac,
-            self._endpoint_id,
-            {
-                "target_temperature": value,
-                "mode": ZTTIN01_MODE_MANUAL,
-            },
-            command_device_id=self._command_device_id,
-        )
+        try:
+            await self._api.set_zttin01_target_temperature(
+                self._command_device_id,
+                self._device_mac,
+                self._endpoint_id,
+                value,
+            )
+            await refresh_zttin01_after_write(
+                self._api,
+                self.coordinator,
+                self._device_serial,
+                self._device_mac,
+                self._endpoint_id,
+                {
+                    "target_temperature": value,
+                    "mode": ZTTIN01_MODE_MANUAL,
+                },
+                command_device_id=self._command_device_id,
+            )
+        except ZentralyAuthError:
+            self.coordinator.config_entry.async_start_reauth(self.coordinator.hass)
+            raise ConfigEntryAuthFailed("Zentraly authentication required") from None
 
 
 class ZentralyDraftNumber(CoordinatorEntity, NumberEntity):

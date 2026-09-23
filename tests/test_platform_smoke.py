@@ -29,6 +29,9 @@ def _load_module(name: str, filename: str):
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Unable to load {name}")
+    if filename == "__init__.py":
+        # An alias of __init__ is a module, not a second integration package.
+        spec.submodule_search_locations = None
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
     spec.loader.exec_module(module)
@@ -72,6 +75,10 @@ def _install_dependency_stubs() -> None:
             self.entry_id = entry_id
             self.version = 5
             self.data = {}
+            self.reauth_requests = 0
+
+        def async_start_reauth(self, hass) -> None:
+            self.reauth_requests += 1
 
     config_entries.ConfigEntry = ConfigEntry
 
@@ -87,6 +94,18 @@ def _install_dependency_stubs() -> None:
 
         def async_create_entry(self, *, title, data):
             return {"title": title, "data": data}
+
+        def async_show_form(self, *, step_id, data_schema, errors):
+            return {"type": "form", "step_id": step_id, "data_schema": data_schema, "errors": errors}
+
+        def _get_reauth_entry(self):
+            return self.reauth_entry
+
+        def async_update_reload_and_abort(self, entry, *, data_updates):
+            # HA callback updates synchronously and schedules one reload.
+            self.hass.config_entries.async_update_entry(entry, data={**entry.data, **data_updates})
+            self.hass.config_entries.reloads.append(entry.entry_id)
+            return {"type": "abort", "reason": "reauth_successful"}
 
     config_entries.ConfigFlow = ConfigFlow
     homeassistant.config_entries = config_entries
@@ -122,6 +141,7 @@ def _install_dependency_stubs() -> None:
     exceptions = _module("homeassistant.exceptions")
     exceptions.HomeAssistantError = type("HomeAssistantError", (Exception,), {})
     exceptions.ConfigEntryNotReady = type("ConfigEntryNotReady", (Exception,), {})
+    exceptions.ConfigEntryAuthFailed = type("ConfigEntryAuthFailed", (Exception,), {})
 
     helpers = _module("homeassistant.helpers", package=True)
     homeassistant.helpers = helpers
@@ -129,6 +149,16 @@ def _install_dependency_stubs() -> None:
     aiohttp_client = _module("homeassistant.helpers.aiohttp_client")
     aiohttp_client.async_get_clientsession = lambda hass: object()
     helpers.aiohttp_client = aiohttp_client
+
+    selector = _module("homeassistant.helpers.selector")
+    selector.TextSelectorType = types.SimpleNamespace(PASSWORD="password")
+    selector.TextSelectorConfig = dict
+
+    class TextSelector:
+        def __init__(self, config):
+            self.config = config
+
+    selector.TextSelector = TextSelector
 
     device_registry = _module("homeassistant.helpers.device_registry")
     device_registry.async_get = lambda hass: None
@@ -294,6 +324,9 @@ class FakeCoordinator:
     async def async_request_refresh(self) -> None:
         return None
 
+    def async_set_updated_data(self, data) -> None:
+        self.data = data
+
     def async_update_listeners(self) -> None:
         return None
 
@@ -308,6 +341,9 @@ class FakeServices:
     def async_register(self, domain: str, service: str, callback, *, schema) -> None:
         self.registered[service] = (domain, callback, schema)
 
+    def async_remove(self, domain: str, service: str) -> None:
+        self.registered.pop(service, None)
+
 
 class FakeHass:
     def __init__(self, entry_id: str, coordinator: FakeCoordinator) -> None:
@@ -321,6 +357,31 @@ class FakeHass:
             }
         }
         self.services = FakeServices()
+        self.config_entries = FakeConfigEntries()
+
+
+class FakeConfigEntries:
+    def __init__(self):
+        self.updates = []
+        self.reloads = []
+        self.forwards = []
+
+    def async_update_entry(self, entry, *, data=None, **kwargs):
+        self.updates.append(data)
+        if data is not None:
+            entry.data = data
+        for key, value in kwargs.items():
+            setattr(entry, key, value)
+
+    async def async_forward_entry_setups(self, entry, platforms):
+        self.forwards.append((entry.entry_id, platforms))
+
+    async def async_unload_platforms(self, entry, platforms):
+        return True
+
+    async def async_reload(self, entry_id):
+        self.reloads.append(entry_id)
+        return True
 
 
 DEVICES = [
@@ -364,20 +425,21 @@ class PlatformSmokeTests(unittest.IsolatedAsyncioTestCase):
             for entry in entries:
                 for _ in range(2):
                     hass = FakeHass(entry.entry_id, FakeCoordinator([]))
-                    with self.assertLogs(integration.__name__, level="ERROR"):
-                        self.assertFalse(await integration.async_setup_entry(hass, entry))
+                    with self.assertRaises(integration.ConfigEntryNotReady):
+                        await integration.async_setup_entry(hass, entry)
 
         self.assertEqual(identities[0], identities[1])
         self.assertEqual(identities[2], identities[3])
         self.assertNotEqual(identities[0], identities[2])
         self.assertEqual(["SAVED-INSTALLATION-GUID"] * 2, identities[4:])
-        self.assertNotIn("device_guid", entries[0].data)
+        self.assertEqual(identities[0], entries[0].data["device_guid"])
 
     async def test_config_flow_saves_the_identity_used_for_login(self) -> None:
         identities = []
 
         async def accept_login(api):
             identities.append(api._device_guid)
+            api._token, api._user_id = "synthetic-token", 42
             return {}
 
         credentials = {"email": "test@example.invalid", "password": "test-password"}
@@ -389,6 +451,9 @@ class PlatformSmokeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(identities[-1], result["data"]["device_guid"])
                 self.assertEqual(credentials["email"], result["data"]["email"])
                 self.assertEqual(credentials["password"], result["data"]["password"])
+                self.assertEqual("synthetic-token", result["data"]["token"])
+                self.assertEqual(42, result["data"]["user_id"])
+                self.assertEqual(identities[-1], result["data"]["firebase_token"])
         self.assertNotEqual(identities[0], identities[1])
 
     async def test_all_platforms_import_and_setup_expected_entities(self) -> None:

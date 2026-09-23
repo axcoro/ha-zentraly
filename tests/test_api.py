@@ -38,6 +38,7 @@ sys.modules.setdefault("custom_components.zentraly", zentraly_package)
 
 aiohttp = types.ModuleType("aiohttp")
 aiohttp.ClientSession = object
+aiohttp.ClientError = type("ClientError", (Exception,), {})
 sys.modules.setdefault("aiohttp", aiohttp)
 
 homeassistant = types.ModuleType("homeassistant")
@@ -79,6 +80,8 @@ class FakeResponse:
         return None
 
     async def json(self) -> dict:
+        if isinstance(self._data, Exception):
+            raise self._data
         return self._data
 
 
@@ -484,6 +487,153 @@ class ZentralyApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(cluster_65006["is_forced_on"], False)
         self.assertEqual(2.0, cluster_65006["on_delay"])
         self.assertEqual(2.0, cluster_65006["heating_demand_time_today"])
+
+
+class SessionApiTests(unittest.IsolatedAsyncioTestCase):
+    """Session persistence and fail-closed authentication, using synthetic data."""
+
+    async def test_saved_session_uses_user_id_and_firebase_without_login(self) -> None:
+        session = FakeSession(FakeResponse(200, {"numStatus": 0, "ioData": {}}))
+        api = ZentralyApi(
+            token="synthetic-token", user_id=42, firebase_token="synthetic-fb",
+            device_guid="SYNTHETIC-GUID", session=session,
+        )
+        await api.get_user_data()
+        self.assertEqual(1, len(session.requests))
+        request = session.requests[0]
+        self.assertEqual(42, request["json"]["ioDCModel"]["ivlngUser"])
+        self.assertEqual("synthetic-fb", decode_firebase_header(request["headers"]["Firebase"])["ivstrUserFBToken"])
+        self.assertEqual({
+            "token": "synthetic-token", "user_id": 42,
+            "firebase_token": "synthetic-fb", "device_guid": "SYNTHETIC-GUID",
+        }, api.session_data())
+
+    async def test_login_exports_only_complete_effective_session(self) -> None:
+        session = FakeSession(FakeResponse(200, {
+            "numStatus": 0, "ioData": {"ivstrToken": "synthetic-token",
+            "ioUser": {"ioDCModel": {"ivlngUser": 42}}},
+        }))
+        api = ZentralyApi(email="synthetic@example.invalid", password="synthetic-password",
+                          device_guid="SYNTHETIC-GUID", session=session)
+        await api.authenticate()
+        exported = api.session_data()
+        self.assertEqual({"token", "user_id", "firebase_token", "device_guid"}, set(exported))
+        self.assertEqual("SYNTHETIC-GUID", exported["firebase_token"])
+        exported["token"] = "changed-copy"
+        self.assertEqual("synthetic-token", api.session_data()["token"])
+
+    def test_incomplete_sessions_are_not_exportable(self) -> None:
+        for token in (None, "", " ", 42, True):
+            with self.subTest(token_type=type(token).__name__):
+                api = ZentralyApi(token=token)
+                with self.assertRaises(api_module.ZentralyAuthError):
+                    api.session_data()
+        for user_id in (None, 0, -1, True, "42", 42.0):
+            with self.subTest(user_id=user_id):
+                api = ZentralyApi(token="synthetic-token", user_id=user_id)
+                with self.assertRaises(api_module.ZentralyAuthError):
+                    api.session_data()
+
+    async def test_http_classification_on_all_routes_without_retry(self) -> None:
+        for route in ("login", "app", "action"):
+            for status in (401, 403, 429, 500, 503):
+                with self.subTest(route=route, status=status):
+                    session = FakeSession(FakeResponse(status, {"secret": "synthetic-secret"}))
+                    api = ZentralyApi(token="synthetic-token", session=session)
+                    try:
+                        if route == "login":
+                            await api.authenticate()
+                        elif route == "app":
+                            await api.get_user_data()
+                        else:
+                            await api.send_iot_command("synthetic-parent", "setConfig", {"ids": []})
+                    except ZentralyApiError as err:
+                        self.assertEqual(status in (401, 403), isinstance(err, api_module.ZentralyAuthError))
+                        self.assertNotIn("synthetic-secret", str(err))
+                    else:
+                        self.fail("HTTP failure was accepted")
+                    self.assertEqual(1, len(session.requests))
+
+    async def test_malformed_json_and_shapes_are_sanitized_api_errors(self) -> None:
+        invalid = ([], None, "synthetic-secret", ValueError("synthetic-secret"),
+                   {"numStatus": "synthetic-secret"}, {"numStatus": False},
+                   {"numStatus": 0, "ioData": []})
+        for route in ("login", "app", "action"):
+            for payload in invalid:
+                with self.subTest(route=route, shape=type(payload).__name__):
+                    session = FakeSession(FakeResponse(200, payload))
+                    api = ZentralyApi(token="synthetic-token", session=session)
+                    with self.assertRaises(ZentralyApiError) as caught:
+                        if route == "login":
+                            await api.authenticate()
+                        elif route == "app":
+                            await api.get_user_data()
+                        else:
+                            await api.send_iot_command("synthetic-parent", "setConfig", {})
+                    self.assertNotIsInstance(caught.exception, api_module.ZentralyAuthError)
+                    self.assertNotIn("synthetic-secret", str(caught.exception))
+                    self.assertEqual(1, len(session.requests))
+
+    async def test_login_invalid_identity_is_not_saved(self) -> None:
+        for token, user_id in (("", 42), (" ", 42), (True, 42), ("synthetic-token", True),
+                               ("synthetic-token", 0), ("synthetic-token", "42"),
+                               ("synthetic-token", None)):
+            with self.subTest(token_type=type(token).__name__, user_id=user_id):
+                session = FakeSession(FakeResponse(200, {
+                    "numStatus": 0, "ioData": {"ivstrToken": token,
+                    "ioUser": {"ioDCModel": {"ivlngUser": user_id}}},
+                }))
+                api = ZentralyApi(session=session)
+                with self.assertRaises(api_module.ZentralyAuthError):
+                    await api.authenticate()
+                with self.assertRaises(api_module.ZentralyAuthError):
+                    api.session_data()
+                self.assertIsNone(api.token)
+                self.assertIsNone(api.user_id)
+
+    async def test_application_status_is_not_guessed_to_be_expired_auth(self) -> None:
+        for route in ("app", "action"):
+            session = FakeSession(FakeResponse(200, {"numStatus": 1, "ioData": {}}))
+            api = ZentralyApi(token="synthetic-token", session=session)
+            with self.assertRaises(ZentralyApiError) as caught:
+                if route == "app":
+                    await api.get_user_data()
+                else:
+                    await api.send_iot_command("synthetic-parent", "setConfig", {})
+            self.assertNotIsInstance(caught.exception, api_module.ZentralyAuthError)
+            self.assertEqual(1, len(session.requests))
+
+    async def test_untrusted_inner_status_cannot_leak_response_values(self) -> None:
+        for status in ("synthetic-secret", True, {"token": "synthetic-secret"}):
+            session = FakeSession(FakeResponse(200, {"numStatus": 0, "ioData": {"status": status}}))
+            api = ZentralyApi(token="synthetic-token", session=session)
+            with self.assertRaises(ZentralyApiError) as caught:
+                await api.send_iot_command("synthetic-parent", "setConfig", {})
+            self.assertNotIn("synthetic-secret", str(caught.exception))
+            self.assertEqual(1, len(session.requests))
+
+
+    async def test_malformed_inventory_is_a_sanitized_api_error(self):
+        invalid = [
+            {"ioUser": []}, {"ioUser": {"coUbications": None}},
+            {"ioUser": {"coUbications": [None]}},
+            {"ioUser": {"coUbications": [{"coZones": [None]}]}},
+            {"ioUser": {"coUbications": [{"coZones": [{"coDevices": [None]}]}]}},
+        ]
+        for io_data in invalid:
+            with self.subTest(shape=type(io_data).__name__):
+                api = ZentralyApi(token="synthetic-token", session=FakeSession(FakeResponse(
+                    200, {"numStatus": 0, "ioData": io_data})))
+                with self.assertRaises(ZentralyApiError):
+                    await api.get_devices()
+
+    def test_explicit_invalid_firebase_token_is_not_replaced_by_guid(self):
+        for token in ("", " ", True, 42):
+            with self.subTest(token_type=type(token).__name__):
+                api = ZentralyApi(token="synthetic-token", user_id=42, firebase_token=token,
+                                  device_guid="SYNTHETIC-GUID")
+                with self.assertRaises(api_module.ZentralyAuthError):
+                    api.session_data()
 
 
 if __name__ == "__main__":

@@ -55,7 +55,11 @@ class ZentralyApiError(Exception):
 
 
 class ZentralyAuthError(ZentralyApiError):
-    """Authentication error."""
+    """Authentication error, optionally retaining fields already read in this operation."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.confirmed_state: dict[str, Any] = {}
 
 
 def command_device_id(device: dict[str, Any]) -> str:
@@ -77,15 +81,18 @@ class ZentralyApi:
         token: str | None = None,
         session: aiohttp.ClientSession | None = None,
         device_guid: str | None = None,
+        user_id: int | None = None,
+        firebase_token: str | None = None,
     ) -> None:
         """Initialize the API client."""
         self._email = email
         self._password = password
         self._token = token
         self._session = session
-        self._user_id: int | None = None
+        self._user_id = user_id
         self._close_session = False
         self._device_guid = device_guid or str(uuid.uuid4()).upper()
+        self._firebase_token = firebase_token
         self._request_counter = 0
         self._rid = 0
 
@@ -111,7 +118,7 @@ class ZentralyApi:
         """Generate Firebase header for API requests."""
         firebase_data = {
             # The app falls back to its device ID when Firebase is unavailable.
-            "ivstrUserFBToken": self._device_guid,
+            "ivstrUserFBToken": self._device_guid if self._firebase_token is None else self._firebase_token,
             "ivstrUserGuid": self._device_guid,
             "ivstrUserZtVersion": ZENTRALY_APP_VERSION,
             "ivnroUserMobileOS": 1,
@@ -158,31 +165,63 @@ class ZentralyApi:
 
         return headers
 
-    async def authenticate(self) -> dict[str, Any]:
-        """Authenticate and get token."""
-        session = await self._get_session()
+    def session_data(self) -> dict[str, Any]:
+        """Export a complete session, never credentials or a partial login."""
+        firebase_token = self._device_guid if self._firebase_token is None else self._firebase_token
+        if (
+            not all(isinstance(value, str) and value.strip() for value in
+                    (self._token, firebase_token, self._device_guid))
+            or type(self._user_id) is not int
+            or self._user_id <= 0
+        ):
+            raise ZentralyAuthError("Incomplete Zentraly session")
+        return {
+            "token": self._token,
+            "user_id": self._user_id,
+            "firebase_token": firebase_token,
+            "device_guid": self._device_guid,
+        }
 
+    @staticmethod
+    async def _response_data(response: Any, label: str) -> dict[str, Any]:
+        """Classify HTTP errors and reject malformed envelopes without logging bodies."""
+        if response.status in (401, 403):
+            raise ZentralyAuthError(f"{label}: {response.status}")
+        if response.status != 200:
+            raise ZentralyApiError(f"{label}: {response.status}")
+        try:
+            data = await response.json()
+        except (ValueError, aiohttp.ClientError):
+            raise ZentralyApiError(f"{label}: invalid JSON") from None
+        if not isinstance(data, dict) or type(data.get("numStatus")) is not int:
+            raise ZentralyApiError(f"{label}: invalid response envelope")
+        return data
+
+    async def authenticate(self) -> dict[str, Any]:
+        """Authenticate once; commit identity only after a complete valid login."""
+        session = await self._get_session()
         async with session.get(
             f"{API_BASE_URL}{API_LOGIN_ENDPOINT}",
             headers=self._get_headers("login"),
         ) as response:
-            if response.status != 200:
-                raise ZentralyAuthError(f"Authentication failed: {response.status}")
-
-            data = await response.json()
-
-            if data.get("numStatus") != 0:
+            data = await self._response_data(response, "Authentication failed")
+            if data["numStatus"] != 0:
                 raise ZentralyAuthError(
-                    f"Authentication failed: status {data.get('numStatus')}"
+                    f"Authentication failed: status {data['numStatus']}"
                 )
-
-            io_data = data.get("ioData", {})
-            self._token = io_data.get("ivstrToken")
-            self._user_id = io_data.get("ioUser", {}).get("ioDCModel", {}).get("ivlngUser")
-
-            if not self._token:
-                raise ZentralyAuthError("No token received")
-
+            io_data = data.get("ioData")
+            if not isinstance(io_data, dict):
+                raise ZentralyApiError("Authentication failed: invalid ioData")
+            user = io_data.get("ioUser", {})
+            model = user.get("ioDCModel", {}) if isinstance(user, dict) else None
+            if not isinstance(model, dict):
+                raise ZentralyApiError("Authentication failed: invalid user data")
+            token = io_data.get("ivstrToken")
+            user_id = model.get("ivlngUser")
+            if (not isinstance(token, str) or not token.strip()
+                    or type(user_id) is not int or user_id <= 0):
+                raise ZentralyAuthError("Authentication returned an incomplete session")
+            self._token, self._user_id = token, user_id
             return data
 
     async def get_user_data(self) -> dict[str, Any]:
@@ -205,14 +244,11 @@ class ZentralyApi:
             headers=self._get_headers("token"),
             json=payload,
         ) as response:
-            if response.status != 200:
-                raise ZentralyApiError(f"API error: {response.status}")
-
-            data = await response.json()
-
-            if data.get("numStatus") != 0:
-                raise ZentralyApiError(f"API error: status {data.get('numStatus')}")
-
+            data = await self._response_data(response, "API error")
+            if data["numStatus"] != 0:
+                raise ZentralyApiError(f"API error: status {data['numStatus']}")
+            if not isinstance(data.get("ioData"), dict):
+                raise ZentralyApiError("API error: invalid ioData")
             return data
 
     async def get_devices(self) -> list[dict[str, Any]]:
@@ -221,20 +257,39 @@ class ZentralyApi:
 
         devices = []
         io_data = data.get("ioData", {})
-        io_user = io_data.get("ioUser", {})
-        ubications = io_user.get("coUbications", [])
+        io_user = io_data.get("ioUser")
+        if not isinstance(io_user, dict):
+            raise ZentralyApiError("API error: malformed device inventory")
+        ubications = io_user.get("coUbications")
+        if not isinstance(ubications, list):
+            raise ZentralyApiError("API error: malformed device inventory")
 
         for ubication in ubications:
+            if not isinstance(ubication, dict) or not isinstance(ubication.get("ioDCModel", {}), dict):
+                raise ZentralyApiError("API error: malformed device inventory")
             ubication_name = ubication.get("ioDCModel", {}).get("ivstrUbicationName", "")
             zones = ubication.get("coZones", [])
+            if not isinstance(zones, list):
+                raise ZentralyApiError("API error: malformed device inventory")
 
             for zone in zones:
+                if not isinstance(zone, dict) or not isinstance(zone.get("ioDCModel", {}), dict):
+                    raise ZentralyApiError("API error: malformed device inventory")
                 zone_name = zone.get("ioDCModel", {}).get("ivstrZoneName", "")
                 zone_devices = zone.get("coDevices", [])
+                if not isinstance(zone_devices, list):
+                    raise ZentralyApiError("API error: malformed device inventory")
 
                 for device in zone_devices:
+                    if not isinstance(device, dict):
+                        raise ZentralyApiError("API error: malformed device inventory")
                     device_model = device.get("ioDCModel", {})
-                    sub_type = device.get("ioSubTypeObj", {}).get("ioDCModel", {})
+                    sub_object = device.get("ioSubTypeObj", {})
+                    if not isinstance(device_model, dict) or not isinstance(sub_object, dict):
+                        raise ZentralyApiError("API error: malformed device inventory")
+                    sub_type = sub_object.get("ioDCModel", {})
+                    if not isinstance(sub_type, dict):
+                        raise ZentralyApiError("API error: malformed device inventory")
                     device_type = device_model.get("ivnroDeviceType")
 
                     device_data = {
@@ -375,10 +430,7 @@ class ZentralyApi:
             headers=self._get_headers("token"),
             json=payload,
         ) as response:
-            if response.status != 200:
-                raise ZentralyApiError(f"Command failed: {response.status}")
-
-            result = await response.json()
+            result = await self._response_data(response, "Command failed")
 
             if result.get("numStatus") != 0:
                 raise ZentralyApiError(
@@ -390,19 +442,21 @@ class ZentralyApi:
             if isinstance(io_data, str):
                 try:
                     io_data = json.loads(io_data)
-                except json.JSONDecodeError as err:
-                    raise ZentralyApiError("Command returned invalid ioData") from err
+                except json.JSONDecodeError:
+                    raise ZentralyApiError("Command returned invalid ioData") from None
 
             if not isinstance(io_data, dict):
                 raise ZentralyApiError("Command returned an invalid ioData response")
 
             status = io_data.get("status")
-            try:
-                successful = int(status) == 200
-            except (TypeError, ValueError):
-                successful = False
-            if not successful:
-                raise ZentralyApiError(f"Command failed: device status {status}")
+            # Numeric strings are accepted by the existing Action contract; do not
+            # coerce booleans, fractional values or arbitrary server text.
+            numeric_status = status
+            if isinstance(status, str) and status.isascii() and status.isdigit():
+                numeric_status = int(status) if len(status) <= 6 else None
+            if type(numeric_status) is not int or numeric_status != 200:
+                safe_status = status if type(status) is int or status is None else "invalid"
+                raise ZentralyApiError(f"Command failed: device status {safe_status}")
 
             return io_data
 
@@ -618,13 +672,17 @@ class ZentralyApi:
         state: dict[str, Any] = {}
 
         for cluster, attrs in cluster_reads.items():
-            response = await self.send_read_attr_command(
-                device_serial,
-                device_mac,
-                cluster,
-                endpoint_id,
-                attrs,
-            )
+            try:
+                response = await self.send_read_attr_command(
+                    device_serial,
+                    device_mac,
+                    cluster,
+                    endpoint_id,
+                    attrs,
+                )
+            except ZentralyAuthError as err:
+                err.confirmed_state = {**state, **err.confirmed_state}
+                raise
             state.update(self._parse_raw_read_attr_response(cluster, response))
 
         return state

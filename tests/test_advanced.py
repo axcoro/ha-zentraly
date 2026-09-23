@@ -33,6 +33,7 @@ sys.modules.setdefault("custom_components.zentraly", zentraly_package)
 
 aiohttp = types.ModuleType("aiohttp")
 aiohttp.ClientSession = object
+aiohttp.ClientError = type("ClientError", (Exception,), {})
 sys.modules.setdefault("aiohttp", aiohttp)
 
 homeassistant = types.ModuleType("homeassistant")
@@ -111,8 +112,15 @@ class FakeApi:
         if self.error:
             raise self.error
         if self.states:
-            return dict(self.states.pop(0))
+            state = self.states.pop(0)
+            if isinstance(state, Exception):
+                raise state
+            return dict(state)
         return dict(self.state)
+
+
+    async def read_boiler_advanced_state(self, *args) -> dict:
+        return await self.read_zttin01_thermostat_state(*args)
 
 
 class Zttin01RefreshTests(unittest.IsolatedAsyncioTestCase):
@@ -377,3 +385,51 @@ class AdvancedAttributeBuilderTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AuthReadbackTests(unittest.IsolatedAsyncioTestCase):
+    """Auth is never a confirmation or retry; preserve only actual partial reads."""
+    async def test_auth_first_and_second_read_preserves_unconfirmed_drafts(self):
+        for boiler in (False, True):
+            requested = ({"boiler_h2o_temperature": 50.0, "on_delay": 2.0} if boiler
+                         else {"temperature_offset": 1.5, "away_temperature": 18.0})
+            for second_read in (False, True):
+                with self.subTest(boiler=boiler, second_read=second_read):
+                    device = {"serial": "SYNTHETIC-CHILD", "parent_serial": "SYNTHETIC-PARENT",
+                              "mac": "00:00:00:00:00:00", "endpoint_id": 1,
+                              "device_type": 17 if boiler else 16}
+                    coordinator = FakeCoordinator(device)
+                    store = advanced.AdvancedDraftStore()
+                    for key, value in requested.items():
+                        store.set(device["serial"], key, value)
+                    first_key = next(iter(requested))
+                    partial = {first_key: requested[first_key]}
+                    states = [partial, api_module.ZentralyAuthError("expired")] if second_read else [api_module.ZentralyAuthError("expired")]
+                    api = FakeApi(states=states)
+                    apply = advanced.async_apply_boiler_advanced if boiler else advanced.async_apply_thermostat_advanced
+                    with patch("asyncio.sleep", new_callable=AsyncMock) as sleep:
+                        with self.assertRaises(api_module.ZentralyAuthError):
+                            await apply(api, coordinator, store, device, requested, set(requested))
+                    self.assertEqual(2 if second_read else 1, len(api.reads))
+                    self.assertEqual(2 if boiler else 1, len(api.writes))
+                    self.assertEqual(1 if second_read else 0, sleep.await_count)
+                    expected_dirty = set(requested) - ({first_key} if second_read else set())
+                    self.assertEqual(expected_dirty, store.dirty_keys(device["serial"]))
+                    result = store.last_apply_result(device["serial"])
+                    self.assertEqual(expected_dirty, result.unconfirmed_keys)
+                    self.assertEqual(set(requested) - expected_dirty, result.confirmed_keys)
+                    self.assertEqual(0, coordinator.refresh_count)
+                    if second_read:
+                        self.assertEqual(partial[first_key], coordinator.data[0][first_key])
+
+    async def test_boiler_auth_between_clusters_carries_only_actual_reads(self):
+        api = api_module.ZentralyApi(token="synthetic-token")
+        responses = [{"status": 200, "attrs": [{"id": 56, "val": 5000}]},
+                     api_module.ZentralyAuthError("expired")]
+        with patch.object(api, "send_read_attr_command", side_effect=responses) as read:
+            with self.assertRaises(api_module.ZentralyAuthError) as caught:
+                await api.read_raw_attrs("SYNTHETIC-PARENT", "00:00:00:00:00:00", 1,
+                                         {65535: [{"id": 56}], 65006: [{"id": 10}]})
+        self.assertEqual(2, read.await_count)
+        self.assertEqual(50.0, caught.exception.confirmed_state["boiler_h2o_temperature"])
+        self.assertNotIn("on_delay", caught.exception.confirmed_state)

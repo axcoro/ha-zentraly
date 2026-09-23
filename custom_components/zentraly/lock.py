@@ -5,6 +5,7 @@ from typing import Any
 
 from homeassistant.components.lock import LockEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import (
@@ -12,7 +13,7 @@ from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
 )
 
-from .api import ZentralyApi, command_device_id
+from .api import ZentralyAuthError, ZentralyApi, command_device_id
 from .const import (
     DEVICE_TYPE_ZTTIN01_THERMOSTAT,
     DOMAIN,
@@ -91,36 +92,44 @@ class ZentralyLock(CoordinatorEntity, LockEntity):
 
     async def async_lock(self, **kwargs: Any) -> None:
         """Lock the thermostat."""
-        await self._api.set_zttin01_lock(
-            self._command_device_id,
-            self._device_mac,
-            self._endpoint_id,
-            True,
-        )
-        await refresh_zttin01_after_write(
-            self._api,
-            self.coordinator,
-            self._device_serial,
-            self._device_mac,
-            self._endpoint_id,
-            {"is_locked": True},
-            command_device_id=self._command_device_id,
-        )
+        try:
+            await self._api.set_zttin01_lock(
+                self._command_device_id,
+                self._device_mac,
+                self._endpoint_id,
+                True,
+            )
+            await refresh_zttin01_after_write(
+                self._api,
+                self.coordinator,
+                self._device_serial,
+                self._device_mac,
+                self._endpoint_id,
+                {"is_locked": True},
+                command_device_id=self._command_device_id,
+            )
+        except ZentralyAuthError:
+            self.coordinator.config_entry.async_start_reauth(self.coordinator.hass)
+            raise ConfigEntryAuthFailed("Zentraly authentication required") from None
 
     async def async_unlock(self, **kwargs: Any) -> None:
         """Unlock the thermostat."""
-        await self._api.set_zttin01_lock(
-            self._command_device_id,
-            self._device_mac,
-            self._endpoint_id,
-            False,
-        )
-        await refresh_zttin01_after_write(
-            self._api,
-            self.coordinator,
-            self._device_serial,
-            self._device_mac,
-            self._endpoint_id,
-            {"is_locked": False},
-            command_device_id=self._command_device_id,
-        )
+        try:
+            await self._api.set_zttin01_lock(
+                self._command_device_id,
+                self._device_mac,
+                self._endpoint_id,
+                False,
+            )
+            await refresh_zttin01_after_write(
+                self._api,
+                self.coordinator,
+                self._device_serial,
+                self._device_mac,
+                self._endpoint_id,
+                {"is_locked": False},
+                command_device_id=self._command_device_id,
+            )
+        except ZentralyAuthError:
+            self.coordinator.config_entry.async_start_reauth(self.coordinator.hass)
+            raise ConfigEntryAuthFailed("Zentraly authentication required") from None
