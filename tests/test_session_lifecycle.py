@@ -176,7 +176,7 @@ class SessionLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 api = api_module.ZentralyApi(**SESSION)
                 with patch.object(api, method, side_effect=AuthError("synthetic-secret")):
                     with self.assertRaises(AuthError):
-                        await integration._async_enrich_raw_attrs(api, [{"serial": "synthetic-child", "device_type": device_type}])
+                        await integration._async_enrich_device_state(api, [{"serial": "synthetic-child", "device_type": device_type}])
 
     async def test_entity_write_auth_starts_reauth_without_inventory_refresh(self):
         _, session = await self.setup_with(ACCOUNT | SESSION, [FakeResponse(200, INVENTORY),

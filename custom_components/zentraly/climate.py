@@ -27,8 +27,9 @@ from .api import ZentralyAuthError, ZentralyApi, command_device_id
 from .const import (
     DEVICE_TYPE_ZTTIN01_THERMOSTAT,
     DOMAIN,
-    HVAC_MODE_MAP,
     THERMOSTAT_DEVICE_TYPES,
+    ZTTWF_MODE_OFF,
+    ZTTWF_MODE_MANUAL,
     ZENTRALY_PRESET_AWAY,
     ZENTRALY_PRESET_NONE,
     ZTTIN01_AWAY_TEMPERATURE,
@@ -45,6 +46,8 @@ from .zttin01 import (
     normal_heat_target_temperature,
     refresh_zttin01_after_write,
 )
+
+from .zttwf import refresh_zttwf_after_write
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -157,23 +160,20 @@ class ZentralyThermostat(CoordinatorEntity, ClimateEntity):
         return None
 
     @property
-    def hvac_mode(self) -> HVACMode:
-        """Return current HVAC mode."""
-        if data := self._device_data:
-            mode = data.get("mode", 1)
-            if self._is_zttin01:
-                if mode == ZTTIN01_MODE_OFF:
-                    return HVACMode.OFF
-                if mode == ZTTIN01_MODE_AUTO:
-                    return HVACMode.AUTO
-                return HVACMode.HEAT
-
-            mode_str = HVAC_MODE_MAP.get(mode, "heat")
-            if mode_str == "heat":
-                return HVACMode.HEAT
-            elif mode_str == "off":
+    def hvac_mode(self) -> HVACMode | None:
+        """Return modes using each family's validated contract."""
+        data = self._device_data
+        if self._is_zttin01:
+            mode = data.get("mode", 1) if data else 1
+            if mode == ZTTIN01_MODE_OFF:
                 return HVACMode.OFF
-        return HVACMode.HEAT
+            if mode == ZTTIN01_MODE_AUTO:
+                return HVACMode.AUTO
+            return HVACMode.HEAT
+        mode = data.get("mode") if data else None
+        if type(mode) is not int:
+            return None
+        return HVACMode.OFF if mode == ZTTWF_MODE_OFF else HVACMode.HEAT
 
     @property
     def preset_mode(self) -> str | None:
@@ -189,27 +189,28 @@ class ZentralyThermostat(CoordinatorEntity, ClimateEntity):
 
     @property
     def hvac_action(self) -> HVACAction | None:
-        """Return current HVAC action."""
+        """Use ZTTWF output; preserve ZTTIN01 demand and temperature fallback."""
         if data := self._device_data:
+            if not self._is_zttin01:
+                mode = data.get("mode")
+                if type(mode) is not int:
+                    return None
+                if mode == ZTTWF_MODE_OFF:
+                    return HVACAction.OFF
+                output = data.get("is_on")
+                if not isinstance(output, bool):
+                    return None
+                return HVACAction.HEATING if output else HVACAction.IDLE
+
             if data.get("mode") == ZTTIN01_MODE_OFF:
                 return HVACAction.OFF
-
-            if self._is_zttin01 and (heat_demand := data.get("heat_demand")) is not None:
+            if (heat_demand := data.get("heat_demand")) is not None:
                 return HVACAction.HEATING if heat_demand else HVACAction.IDLE
-
-            if not self._is_zttin01 and not data.get("is_on", False):
-                return HVACAction.OFF
-
             current = data.get("current_temperature", 0)
             target = data.get("target_temperature", 0)
-
             if not isinstance(current, (int, float)) or not isinstance(target, (int, float)):
                 return None
-
-            if current < target:
-                return HVACAction.HEATING
-            else:
-                return HVACAction.IDLE
+            return HVACAction.HEATING if current < target else HVACAction.IDLE
         return None
 
     @property
@@ -238,10 +239,8 @@ class ZentralyThermostat(CoordinatorEntity, ClimateEntity):
                     }
                 )
                 return
-            else:
-                await self._api.set_target_temperature(self._command_device_id, temperature)
-
-            await self.coordinator.async_request_refresh()
+            await self._api.set_target_temperature(self._command_device_id, temperature)
+            await self._refresh_zttwf_after_write({"target_temperature": temperature})
         except ZentralyAuthError:
             self.coordinator.config_entry.async_start_reauth(self.coordinator.hass)
             raise ConfigEntryAuthFailed("Zentraly authentication required") from None
@@ -289,10 +288,13 @@ class ZentralyThermostat(CoordinatorEntity, ClimateEntity):
 
             if hvac_mode == HVACMode.HEAT:
                 await self._api.turn_on(self._command_device_id)
+                expected_state = {"mode": ZTTWF_MODE_MANUAL}
             elif hvac_mode == HVACMode.OFF:
                 await self._api.turn_off(self._command_device_id)
-
-            await self.coordinator.async_request_refresh()
+                expected_state = {"mode": ZTTWF_MODE_OFF}
+            else:
+                return
+            await self._refresh_zttwf_after_write(expected_state)
         except ZentralyAuthError:
             self.coordinator.config_entry.async_start_reauth(self.coordinator.hass)
             raise ConfigEntryAuthFailed("Zentraly authentication required") from None
@@ -332,6 +334,15 @@ class ZentralyThermostat(CoordinatorEntity, ClimateEntity):
         except ZentralyAuthError:
             self.coordinator.config_entry.async_start_reauth(self.coordinator.hass)
             raise ConfigEntryAuthFailed("Zentraly authentication required") from None
+
+    async def _refresh_zttwf_after_write(self, expected_state: dict[str, Any]) -> None:
+        """Read the same command target as the write; publish by child identity."""
+        await refresh_zttwf_after_write(
+            self._api,
+            self.coordinator,
+            {"serial": self._device_serial, "iot_hub_device_id": self._command_device_id},
+            expected_state,
+        )
 
     def _normal_heat_target_temperature(self) -> float:
         """Return a target temperature that exits off/away safely."""
