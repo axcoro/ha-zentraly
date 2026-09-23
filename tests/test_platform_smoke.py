@@ -528,7 +528,7 @@ class PlatformSmokeTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         with self.assertLogs("custom_components.zentraly.integration", level="WARNING") as logs:
-            await integration._async_enrich_raw_attrs(FailingApi(), devices)
+            await integration._async_enrich_device_state(FailingApi(), devices)
 
         output = "\n".join(logs.output)
         self.assertNotIn("FULL-PRIVATE-SERIAL-1234", output)

@@ -6,7 +6,7 @@
 
 Home Assistant custom integration for **Zentraly WiFi Thermostats** (by PEISA/FV Group - Argentina).
 
-## Candidate: selective upstream 1.0.5 — phase A
+## Candidate: selective upstream 1.0.5 — phases A and B
 
 The local integration stays at **1.1.0**. Phase A adds persistent sessions and
 same-account reauthentication while preserving advanced type-16/17 controls.
@@ -16,6 +16,11 @@ reauth and setup retries in memory; restarting HA still discards them.
 This candidate passes offline checks; actual Home Assistant/cloud/device acceptance
 is pending. In particular, the identity fields returned by `/App` must be verified
 before accepting reauth live. See [phase A details and rollback](docs/upstream-105-phase-a.md).
+
+Phase B adds validated cloud getConfig state for type-2/ZTTWF, relay-based activity
+and write confirmation. Targets are rounded to centidegrees and confirmed within
+±0.01 °C. No write is retried. Accept A before promoting B; see
+[phase B details and rollback](docs/upstream-105-phase-b.md).
 
 ## Features
 

@@ -44,6 +44,7 @@ from .const import (
     CONF_TOKEN,
     CONF_USER_ID,
     BOILER_DEVICE_TYPES,
+    DEVICE_TYPE_THERMOSTAT,
     DEVICE_TYPE_ZTTIN01_THERMOSTAT,
     DATA_REAUTH_DRAFTS,
     DOMAIN,
@@ -54,6 +55,8 @@ from .const import (
     SERVICE_REFRESH_DEVICE,
     ZTTIN01_DEFAULT_ENDPOINT,
 )
+
+from .zttwf import read_zttwf_state
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -220,7 +223,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         """Fetch data from API."""
         try:
             devices = await api.get_devices()
-            await _async_enrich_raw_attrs(api, devices)
+            await _async_enrich_device_state(api, devices)
             return devices
         except ZentralyAuthError:
             raise ConfigEntryAuthFailed("Zentraly authentication required") from None
@@ -255,16 +258,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
-async def _async_enrich_raw_attrs(
+async def _async_enrich_device_state(
     api: ZentralyApi,
     devices: list[dict],
 ) -> None:
-    """Add read-only raw diagnostic attributes to fetched ZTTIN01 device data."""
+    """Read validated ZTTWF state and optional existing type-16/17 attributes."""
     for device in devices:
         device_type = device.get("device_type")
         command_target = command_device_id(device)
         try:
-            if device_type == DEVICE_TYPE_ZTTIN01_THERMOSTAT:
+            if device_type == DEVICE_TYPE_THERMOSTAT:
+                state = await read_zttwf_state(api, device)
+                state.update(connected=True, data_source="cloud_get_config")
+            elif device_type == DEVICE_TYPE_ZTTIN01_THERMOSTAT:
                 state = await api.read_zttin01_raw_attrs(
                     command_target,
                     device.get("mac"),
@@ -281,14 +287,18 @@ async def _async_enrich_raw_attrs(
         except ZentralyAuthError:
             raise
         except ZentralyApiError:
+            if device_type == DEVICE_TYPE_THERMOSTAT:
+                device.update(connected=False, data_source="unavailable")
             _LOGGER.warning(
-                "Failed to read raw attrs for Zentraly device %s",
+                "Failed to read cloud state for Zentraly device %s",
                 _safe_device_reference(device.get("serial")),
             )
             continue
         except Exception as err:  # noqa: BLE001
+            if device_type == DEVICE_TYPE_THERMOSTAT:
+                device.update(connected=False, data_source="unavailable")
             _LOGGER.warning(
-                "Unexpected error reading raw attrs for Zentraly device %s (%s)",
+                "Unexpected error reading cloud state for Zentraly device %s (%s)",
                 _safe_device_reference(device.get("serial")),
                 type(err).__name__,
             )

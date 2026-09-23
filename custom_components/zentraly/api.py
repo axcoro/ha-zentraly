@@ -45,6 +45,8 @@ from .const import (
     ZTTIN01_RAW_ATTR_READS,
     ZTTIN01_READ_ATTRS,
     ZENTRALY_APP_VERSION,
+    ZTTWF_MODE_OFF,
+    ZTTWF_MODE_MANUAL,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -520,7 +522,7 @@ class ZentralyApi:
 
     async def set_target_temperature(self, device_serial: str, temperature: float) -> dict[str, Any]:
         """Set target temperature."""
-        temp_value = int(temperature * TEMP_SCALE)
+        temp_value = round(temperature * TEMP_SCALE)
         return await self.send_iot_command(
             device_serial,
             CMD_SET_CONFIG,
@@ -863,11 +865,11 @@ class ZentralyApi:
 
     async def turn_on(self, device_serial: str) -> dict[str, Any]:
         """Turn thermostat on (heat mode)."""
-        return await self.set_hvac_mode(device_serial, 1)
+        return await self.set_hvac_mode(device_serial, ZTTWF_MODE_MANUAL)
 
     async def turn_off(self, device_serial: str) -> dict[str, Any]:
         """Turn thermostat off."""
-        return await self.set_hvac_mode(device_serial, 4)
+        return await self.set_hvac_mode(device_serial, ZTTWF_MODE_OFF)
 
     @property
     def token(self) -> str | None:

@@ -133,15 +133,9 @@ CONFIG_IDS = [
     "service"
 ]
 
-# Legacy thermostat modes (kept for device_type=2 compatibility)
-HVAC_MODE_MAP = {
-    1: "heat",
-    2: "cool",  # Assuming
-    3: "auto",  # Assuming
-    4: "off"
-}
-
-HVAC_MODE_REVERSE = {v: k for k, v in HVAC_MODE_MAP.items()}
+# Type-2 / ZTTWF write modes; nonzero integer read modes represent heat.
+ZTTWF_MODE_OFF = 0
+ZTTWF_MODE_MANUAL = 2
 
 # Update interval
 SCAN_INTERVAL_SECONDS = 60
