@@ -11,5 +11,5 @@ venv/
 *.egg-info/
 dist/
 build/
-test_api.py
-test_api_standalone.py
+/test_api.py
+/test_api_standalone.py

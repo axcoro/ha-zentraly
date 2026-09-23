@@ -1,8 +1,8 @@
 """Observable thermostat state, including relay hysteresis and stale updates."""
-from enum import IntFlag, StrEnum
 import sys
 import types
 import unittest
+from enum import IntFlag, StrEnum
 from unittest.mock import AsyncMock
 
 from test_api import PACKAGE_PATH, _load_module
@@ -12,6 +12,7 @@ from test_setup import module
 class HVACMode(StrEnum):
     HEAT = "heat"
     OFF = "off"
+    AUTO = "auto"
 
 
 class HVACAction(StrEnum):
@@ -24,6 +25,7 @@ class Features(IntFlag):
     TARGET_TEMPERATURE = 1
     TURN_ON = 2
     TURN_OFF = 4
+    PRESET_MODE = 8
 
 
 class CoordinatorEntity:
@@ -55,7 +57,7 @@ climate = _load_module("custom_components.zentraly.climate", PACKAGE_PATH / "cli
 
 class ClimateStateTests(unittest.TestCase):
     def setUp(self):
-        self.device = {"serial": "synthetic-123", "mode": 4, "is_on": True,
+        self.device = {"serial": "synthetic-123", "device_type": 2, "mode": 4, "is_on": True,
                        "current_temperature": 23.1, "target_temperature": 23,
                        "connected": True}
         self.coordinator = types.SimpleNamespace(data=[self.device], last_update_success=True)
@@ -83,18 +85,31 @@ class ClimateStateTests(unittest.TestCase):
 
 class PowerTargetTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.device = {'serial': 'synthetic-123', 'mode': 4, 'is_on': True,
-                       'target_temperature': 23.0, 'connected': True}
+        self.device = {'serial': 'synthetic-123', 'device_type': 2, 'mode': 4, 'is_on': True,
+                       'current_temperature': 22.0, 'target_temperature': 23.0, 'connected': True}
+        self.physical_state = dict(self.device)
         async def off(_):
-            self.device.update(mode=0, target_temperature=5.0, is_on=False)
+            self.physical_state.update(mode=0, target_temperature=5.0, is_on=False)
         async def on(_):
-            self.device.update(mode=2)
+            self.physical_state.update(mode=2)
         async def target(_, value):
-            self.device.update(target_temperature=value)
+            self.physical_state.update(target_temperature=value)
+        async def read(_):
+            return {'status': 200, 'ids': [
+                {'targetTemp': round(self.physical_state['target_temperature'] * 100)},
+                {'temperature': round(self.physical_state['current_temperature'] * 100)},
+                {'thermostatMode': self.physical_state['mode']},
+                {'output': int(self.physical_state['is_on'])},
+            ]}
+        def publish(devices):
+            self.coordinator.data = devices
+            self.device = devices[0]
+            self.entity._handle_coordinator_update()
         self.api = types.SimpleNamespace(turn_off=AsyncMock(side_effect=off),
-            turn_on=AsyncMock(side_effect=on), set_target_temperature=AsyncMock(side_effect=target))
+            turn_on=AsyncMock(side_effect=on), set_target_temperature=AsyncMock(side_effect=target),
+            get_device_config=AsyncMock(side_effect=read))
         self.coordinator = types.SimpleNamespace(data=[self.device], last_update_success=True,
-                                                async_request_refresh=AsyncMock())
+            async_request_refresh=AsyncMock(), async_set_updated_data=publish)
         self.entity = climate.ZentralyThermostat(self.coordinator, self.api, self.device)
 
     async def test_on_restores_target_after_device_off_resets_it_to_five(self):
@@ -117,6 +132,7 @@ class PowerTargetTests(unittest.IsolatedAsyncioTestCase):
         self.device['target_temperature'] = 24.0
         self.entity._handle_coordinator_update()
         self.device.update(mode=0, target_temperature=5.0)
+        self.physical_state.update(self.device)
         self.entity._handle_coordinator_update()
         await self.entity.async_turn_on()
         self.assertEqual(24.0, self.entity.target_temperature)

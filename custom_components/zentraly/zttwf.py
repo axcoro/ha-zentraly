@@ -1,16 +1,18 @@
-"""Validated cloud-only state for Zentraly type-2 / ZTTWF thermostats."""
+"""Validated local or cloud state for Zentraly type-2 / ZTTWF thermostats."""
 from __future__ import annotations
 
 import asyncio
 from decimal import Decimal
 from math import isfinite
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import aiohttp
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .api import ZentralyApi, ZentralyApiError, ZentralyAuthError, command_device_id
 from .const import TEMP_SCALE, ZTTWF_MODE_OFF
+
+if TYPE_CHECKING:
+    from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 ZTTWF_STATE_KEYS = (
     "current_temperature", "target_temperature", "mode", "is_on", "humidity", "is_locked",
@@ -69,8 +71,12 @@ def parse_zttwf_config(config: dict[str, Any]) -> dict[str, Any]:
 
 
 async def read_zttwf_state(api: ZentralyApi, device: dict[str, Any]) -> dict[str, Any]:
-    """Read once through the existing Action envelope and parent/fallback routing."""
-    return parse_zttwf_config(await api.get_device_config(command_device_id(device)))
+    """Read through the shared local/cloud path with parent/fallback routing."""
+    config = await api.get_device_config(command_device_id(device))
+    state = parse_zttwf_config(config)
+    if "data_source" in config:
+        state["data_source"] = config["data_source"]
+    return state
 
 
 def _matches_expected(actual: dict[str, Any], expected: dict[str, Any]) -> bool:
@@ -111,7 +117,7 @@ def _publish_state(
             device.update(connected=False, data_source="unavailable")
         else:
             device.update({key: state[key] for key in ZTTWF_STATE_KEYS})
-            device.update(connected=True, data_source="cloud_get_config")
+            device.update(connected=True, data_source=state.get("data_source", "cloud"))
         devices.append(device)
         updated = True
     if updated:

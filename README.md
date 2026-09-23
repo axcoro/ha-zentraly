@@ -6,7 +6,28 @@
 
 Home Assistant custom integration for **Zentraly WiFi Thermostats** (by PEISA/FV Group - Argentina).
 
-## Upgrade to 1.0.5
+## Local candidate 1.1.0 — 2026-09-23
+
+This branch is rebased onto upstream `7f1002c` (1.0.5). It retains upstream
+session handling, LAN discovery, local transport and type-2 target restoration,
+and adds the ZTTIN01/type-16 and boiler/type-17 capabilities of this fork.
+Config entry version remains 5; existing entries, options and entity identifiers
+are preserved. This candidate is being validated locally before any new release.
+See [validation and recovery](docs/upstream-rebase-local.md).
+
+Saved sessions are reused. Initial setup still accepts email/password and saves
+the complete session returned by the provider. An invalid saved session requests
+reauthentication through the masked official-app session JSON field; it never
+silently falls back to password login. Password-only login remains subject to
+provider acceptance.
+
+Reads can fall back from LAN to cloud. A write selects one transport and is never
+automatically replayed through another transport. Changes are published from
+device readback, with at most one repeated confirmation read. Advanced drafts
+survive reauthentication and setup retries in memory; restarting Home Assistant
+discards them. A later ordinary integration reload also discards drafts.
+
+## Upstream upgrade notes for 1.0.5
 
 Install **v1.0.5** through HACS and restart Home Assistant. Keep the existing
 Zentraly integration entry: it contains the saved session used for reconnection.
@@ -32,7 +53,15 @@ delete an existing entry to troubleshoot a login failure.
 
 ## Supported Devices
 
-- Zentraly WiFi Thermostat (ZTTWF series)
+- Zentraly WiFi Thermostat (type 2/ZTTWF): `getConfig`/`setConfig`, HEAT/OFF.
+- ZTTIN01 (type 16): `readAttr`/`writeAttr`, HEAT/AUTO/OFF, away preset, lock,
+  advanced settings and a read-only decoded schedule.
+- Boiler extension (type 17): telemetry and documented advanced settings.
+  Schedule editing and writing `ivnumDeviceOffDelay` are not supported.
+
+The integration provides `climate`, `sensor`, `binary_sensor`, `number`, `select`,
+`lock` and `button`. Advanced number/select entities edit an in-memory draft;
+the corresponding apply button or service sends the changes and confirms them.
 
 ## Installation
 
@@ -81,6 +110,20 @@ The standard Home Assistant climate services are supported:
 - `climate.set_hvac_mode` - Set HVAC mode (heat/off)
 - `climate.turn_on` - Turn on heating
 - `climate.turn_off` - Turn off heating
+
+The integration also provides:
+
+- `zentraly.refresh_device`: optional `device_id`; discards pending drafts for
+  the selected devices and refreshes their state.
+- `zentraly.apply_thermostat_advanced_settings`: `device_id`, plus optional
+  `temperature_offset`, `away_temperature`, `display_always_on`,
+  `display_brightness` and `display_type`.
+- `zentraly.apply_boiler_settings`: `device_id`, plus optional
+  `boiler_h2o_temperature`, `is_h2o_enabled`, `boiler_heating_temperature`,
+  `is_comfort_mode`, `on_delay`, `is_forced_on` and `weather_type`.
+
+Apply services preserve unconfirmed draft values. Controls retain the child's
+Home Assistant identity while commands use its parent when present.
 
 ## Troubleshooting
 

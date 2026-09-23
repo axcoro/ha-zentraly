@@ -1,5 +1,9 @@
 # Phase B — validated ZTTWF cloud state
 
+> Historical stack record (2026-09-22). The current local candidate is the
+> [real upstream rebase](upstream-rebase-local.md), which also preserves upstream
+> LAN transport and heating-target restoration. These are old branch references.
+
 Component 1.1.0; config entry version 5. Branch codex/upstream-105-b-zttwf.
 Base and rollback: 365e4258f175daa483e8c67f6dd9bef062927001 (public phase A).
 Exact immutable head and component hashes are recorded in the PR description and

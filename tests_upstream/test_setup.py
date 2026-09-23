@@ -1,16 +1,16 @@
 """Offline startup checks; all credentials and server responses are synthetic."""
+import base64
 import importlib.util
-from pathlib import Path
+import json
 import sys
 import types
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
-from test_api import FakeResponse, FakeSession, ZentralyApi, const_module
-import base64
-import json
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.padding import PKCS7
+from test_api import FakeResponse, FakeSession, ZentralyApi, const_module
 
 
 class ConfigEntryAuthFailed(Exception):
@@ -18,8 +18,10 @@ class ConfigEntryAuthFailed(Exception):
 
 
 class FakeCoordinator:
-    def __init__(self, hass, logger, *, name, update_method, update_interval):
+    def __init__(self, hass, logger, *, name, update_method, update_interval, config_entry=None):
         self.update_method = update_method
+        self.hass = hass
+        self.config_entry = config_entry
 
     async def async_config_entry_first_refresh(self):
         self.data = await self.update_method()
@@ -35,12 +37,16 @@ def module(name, **values):
 const = sys.modules['homeassistant.const']
 const.CONF_EMAIL = 'email'
 const.CONF_PASSWORD = 'password'
+const.ATTR_DEVICE_ID = 'device_id'
 module('homeassistant.components', zeroconf=types.SimpleNamespace())
 module('homeassistant.config_entries', ConfigEntry=object)
-module('homeassistant.core', HomeAssistant=object)
-module('homeassistant.exceptions', ConfigEntryAuthFailed=ConfigEntryAuthFailed)
+module('homeassistant.core', HomeAssistant=object, ServiceCall=object)
+module('homeassistant.exceptions', ConfigEntryAuthFailed=ConfigEntryAuthFailed,
+       ConfigEntryNotReady=type('ConfigEntryNotReady', (Exception,), {}),
+       HomeAssistantError=type('HomeAssistantError', (Exception,), {}))
 client = types.SimpleNamespace(async_get_clientsession=Mock())
-module('homeassistant.helpers', aiohttp_client=client)
+module('homeassistant.helpers', aiohttp_client=client,
+       device_registry=types.SimpleNamespace(), entity_registry=types.SimpleNamespace())
 module('homeassistant.helpers.update_coordinator', DataUpdateCoordinator=FakeCoordinator,
        UpdateFailed=type('UpdateFailed', (Exception,), {}))
 module('zeroconf.asyncio', AsyncServiceBrowser=object, AsyncServiceInfo=object)
@@ -56,7 +62,8 @@ spec.loader.exec_module(setup)
 class SessionStartupTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.hass = types.SimpleNamespace(data={}, config_entries=types.SimpleNamespace(
-            async_forward_entry_setups=AsyncMock(), async_update_entry=Mock()))
+            async_forward_entry_setups=AsyncMock(), async_update_entry=Mock()),
+            services=types.SimpleNamespace(has_service=Mock(return_value=False), async_register=Mock()))
         self.entry = types.SimpleNamespace(entry_id='synthetic-entry', data={
             'email': 'test@example.invalid', 'password': 'unused-test-password',
             'token': 'synthetic-session-token', 'user_id': 42,
@@ -85,38 +92,54 @@ class SessionStartupTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_rejected_session_requires_reauthentication_without_password_retry(self):
         session = FakeSession(FakeResponse(401, {}))
-        with patch.object(client, 'async_get_clientsession', return_value=session), \
-             patch.object(ZentralyApi, 'authenticate', new_callable=AsyncMock) as login:
-            with self.assertRaises(ConfigEntryAuthFailed):
-                await setup.async_setup_entry(self.hass, self.entry)
+        with (
+            patch.object(client, 'async_get_clientsession', return_value=session),
+            patch.object(ZentralyApi, 'authenticate', new_callable=AsyncMock) as login,
+            self.assertRaises(ConfigEntryAuthFailed),
+        ):
+            await setup.async_setup_entry(self.hass, self.entry)
         login.assert_not_awaited()
         self.hass.config_entries.async_forward_entry_setups.assert_not_awaited()
 
     async def test_existing_password_entry_keeps_login_flow(self):
+        session_data = {key: self.entry.data[key] for key in (
+            'token', 'user_id', 'firebase_token', 'device_guid')}
         del self.entry.data['token']
         del self.entry.data['user_id']
-        api = types.SimpleNamespace(authenticate=AsyncMock(), get_devices=AsyncMock(return_value=[]))
+        api = types.SimpleNamespace(authenticate=AsyncMock(), get_devices=AsyncMock(return_value=[]),
+                                    session_data=Mock(return_value=session_data))
         with patch.object(setup, 'ZentralyApi', return_value=api):
             self.assertTrue(await setup.async_setup_entry(self.hass, self.entry))
         api.authenticate.assert_awaited_once()
         api.get_devices.assert_awaited_once()
+        self.assertEqual(session_data['token'],
+                         self.hass.config_entries.async_update_entry.call_args.kwargs['data']['token'])
 
     async def test_incomplete_saved_session_requires_reauthentication(self):
         del self.entry.data['firebase_token']
-        with patch.object(client, 'async_get_clientsession') as get_session:
-            with self.assertRaises(ConfigEntryAuthFailed):
-                await setup.async_setup_entry(self.hass, self.entry)
+        with (
+            patch.object(client, 'async_get_clientsession') as get_session,
+            self.assertRaises(ConfigEntryAuthFailed),
+        ):
+            await setup.async_setup_entry(self.hass, self.entry)
         get_session.assert_not_called()
 
     async def test_legacy_entry_keeps_identity_across_reloads(self):
         self.entry.data = {'email': 'test@example.invalid', 'password': 'synthetic-password'}
-        api = types.SimpleNamespace(authenticate=AsyncMock(), get_devices=AsyncMock(return_value=[]))
+        session_data = {'token': 'synthetic-jwt', 'user_id': 42, 'firebase_token': 'synthetic-firebase'}
+        api = types.SimpleNamespace(authenticate=AsyncMock(), get_devices=AsyncMock(return_value=[]),
+            session_data=Mock(side_effect=lambda: {
+                **session_data, 'device_guid': factory.call_args.kwargs['device_guid']}))
+        self.hass.config_entries.async_update_entry.side_effect = (
+            lambda entry, *, data: setattr(entry, 'data', data))
         with patch.object(setup, 'ZentralyApi', return_value=api) as factory:
             await setup.async_setup_entry(self.hass, self.entry)
             first = factory.call_args.kwargs['device_guid']
             await setup.async_setup_entry(self.hass, self.entry)
             self.assertTrue(first)
             self.assertEqual(first, factory.call_args.kwargs['device_guid'])
+        api.authenticate.assert_awaited_once()
+        self.assertEqual(first, self.entry.data['device_guid'])
 
 
 if __name__ == '__main__':

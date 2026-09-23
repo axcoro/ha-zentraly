@@ -5,7 +5,7 @@
     "@rodrigouroz"
   ],
   "config_flow": true,
-  "dependencies": [],
+  "dependencies": ["zeroconf"],
   "documentation": "https://github.com/rodrigouroz/ha-zentraly",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/rodrigouroz/ha-zentraly/issues",

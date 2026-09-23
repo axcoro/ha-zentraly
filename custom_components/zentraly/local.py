@@ -18,6 +18,10 @@ class ZentralyLocalError(Exception):
     """Local discovery or communication error."""
 
 
+class ZentralyLocalDiscoveryError(ZentralyLocalError):
+    """No LAN address was found; no WebSocket connection has been attempted."""
+
+
 class ZentralyLocalClient:
     """Send the same device commands as the official app over the LAN."""
 
@@ -41,9 +45,12 @@ class ZentralyLocalClient:
         if cached := self._address_cache.get(device_serial):
             return cached
 
-        resolved = await self._resolver(device_serial)
+        try:
+            resolved = await self._resolver(device_serial)
+        except (TimeoutError, OSError):
+            raise ZentralyLocalDiscoveryError("Local discovery failed") from None
         if resolved is None:
-            raise ZentralyLocalError("device not found via mDNS")
+            raise ZentralyLocalDiscoveryError("Device not found via mDNS")
 
         self._address_cache[device_serial] = resolved
         return resolved

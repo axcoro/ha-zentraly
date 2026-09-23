@@ -5,7 +5,7 @@ import types
 import unittest
 from unittest.mock import Mock, patch
 
-from test_api import FakeResponse, FakeSession, PACKAGE_PATH, _load_module
+from test_api import PACKAGE_PATH, FakeResponse, FakeSession, _load_module
 from test_setup import client, module
 
 
@@ -36,7 +36,7 @@ class SessionFlowTests(unittest.IsolatedAsyncioTestCase):
         self.user_input = {'session': json.dumps(self.session_data)}
         self.entry = types.SimpleNamespace(entry_id='existing-entry', data={'email': 'test@example.invalid'})
         self.flow = flow_module.ZentralyConfigFlow()
-        self.flow.hass = object()
+        self.flow.hass = types.SimpleNamespace(data={})
         self.flow._get_reauth_entry = Mock(return_value=self.entry)
         self.flow.async_show_form = Mock(side_effect=lambda **kwargs: kwargs)
         self.flow.async_update_reload_and_abort = Mock(return_value={'type': 'abort', 'reason': 'reauth_successful'})

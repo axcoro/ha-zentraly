@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.1.0 — local candidate, 2026-09-23
+
+- Rebase the complete type-2/16/17 fork onto upstream 1.0.5, preserving LAN
+  discovery, local transport and restoration of the type-2 heating target.
+- Keep seven platforms, three services, config entry version 5 and existing
+  entity identifiers; migrate entries without deleting registry records.
+- Persist complete initial sessions, trigger reauthentication directly from
+  failed actions, reject incomplete inventories and recover corrupt saved IDs
+  while strictly validating the replacement account.
+- Keep advanced drafts in memory through reauthentication and setup retries.
+- Round type-2 setpoints to centesimal wire units and publish confirmed readback
+  with a 0.01 C tolerance. Never automatically retry a device write.
+- Retain the 33 original upstream regression cases in an isolated test process,
+  alongside fork and integration regressions. Live acceptance is tracked
+  separately in `docs/upstream-rebase-local.md`.
+
 ## 1.0.5
 
 - Reuse complete saved account sessions after restart and HACS updates, instead

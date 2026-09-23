@@ -1,6 +1,7 @@
 """Zentraly API Client."""
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -30,6 +31,7 @@ from .const import (
     BOILER_RAW_ATTR_READS,
     DC_OPER_RUN_IOT,
     DEVICE_TYPE_BOILER,
+    DEVICE_TYPE_THERMOSTAT,
     DEVICE_TYPE_ZTTIN01_THERMOSTAT,
     TEMP_SCALE,
     ZTTIN01_ATTR_CURRENT_TEMPERATURE,
@@ -48,6 +50,7 @@ from .const import (
     ZTTWF_MODE_OFF,
     ZTTWF_MODE_MANUAL,
 )
+from .local import ZentralyLocalClient, ZentralyLocalDiscoveryError, ZentralyLocalError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -85,18 +88,21 @@ class ZentralyApi:
         device_guid: str | None = None,
         user_id: int | None = None,
         firebase_token: str | None = None,
+        local_client: ZentralyLocalClient | None = None,
     ) -> None:
         """Initialize the API client."""
         self._email = email
         self._password = password
         self._token = token
         self._session = session
+        self._local_client = local_client
         self._user_id = user_id
         self._close_session = False
         self._device_guid = device_guid or str(uuid.uuid4()).upper()
         self._firebase_token = firebase_token
         self._request_counter = 0
         self._rid = 0
+        self._local_keys: dict[str, str] = {}
 
     def _next_rid(self) -> int:
         """Return the next request id for IoT commands."""
@@ -258,6 +264,7 @@ class ZentralyApi:
         data = await self.get_user_data()
 
         devices = []
+        local_keys: dict[str, str] = {}
         io_data = data.get("ioData", {})
         io_user = io_data.get("ioUser")
         if not isinstance(io_user, dict):
@@ -293,6 +300,14 @@ class ZentralyApi:
                     if not isinstance(sub_type, dict):
                         raise ZentralyApiError("API error: malformed device inventory")
                     device_type = device_model.get("ivnroDeviceType")
+                    local_target = device_model.get("ivstrParentDeviceSerial")
+                    local_key = device_model.get("ivstrParentDeviceBleKey")
+                    if (
+                        device_model.get("ivblnUseLocalConn") is True
+                        and isinstance(local_target, str) and local_target.strip()
+                        and isinstance(local_key, str) and local_key.strip()
+                    ):
+                        local_keys[local_target] = local_key
 
                     device_data = {
                         "serial": device_model.get("ivstrDeviceSerial"),
@@ -376,7 +391,61 @@ class ZentralyApi:
 
                     devices.append(device_data)
 
+        # Commit the account's key map only after validating the entire inventory.
+        self._local_keys = local_keys
+        await asyncio.gather(*(
+            self._refresh_device_config(device)
+            for device in devices
+            if device.get("device_type") == DEVICE_TYPE_THERMOSTAT
+        ))
         return devices
+
+    async def _refresh_device_config(self, device: dict[str, Any]) -> None:
+        """Replace the app snapshot with validated live type-2 thermostat state."""
+        from .zttwf import read_zttwf_state
+
+        try:
+            state = await read_zttwf_state(self, device)
+        except ZentralyAuthError:
+            raise
+        except (ZentralyApiError, aiohttp.ClientError, TimeoutError, OSError):
+            device.update(connected=False, data_source="unavailable")
+            _LOGGER.debug("Live thermostat config unavailable")
+            return
+        device.update(state, connected=True, data_source=state.get("data_source", "cloud"))
+
+    async def get_local_device_config(
+        self, device_serial: str, key: str,
+    ) -> dict[str, Any]:
+        """Read configuration directly from the local thermostat hub."""
+        if self._local_client is None:
+            raise ZentralyApiError("Local transport is not configured")
+        try:
+            return await self._local_client.send_command(
+                device_serial, key, CMD_GET_CONFIG, {"ids": CONFIG_IDS},
+            )
+        except (ZentralyLocalError, aiohttp.ClientError, TimeoutError, OSError,
+                ValueError, TypeError):
+            raise ZentralyApiError("Local configuration read failed") from None
+
+    async def _send_command_prefer_local(
+        self, device_serial: str, command: str, data: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Choose one write transport before sending; never replay a failed write."""
+        local_key = self._local_keys.get(device_serial)
+        if local_key and self._local_client is not None:
+            try:
+                return await self._local_client.send_command(
+                    device_serial, local_key, command, data,
+                )
+            except ZentralyLocalDiscoveryError:
+                # Discovery finished before any connection or device write.
+                # A connection/send failure below must never select cloud.
+                pass
+            except (ZentralyLocalError, aiohttp.ClientError, TimeoutError, OSError,
+                    ValueError, TypeError):
+                raise ZentralyApiError("Local device command failed") from None
+        return await self.send_iot_command(device_serial, command, data)
 
     def _scaled_value(self, source: dict[str, Any], key: str) -> float | None:
         """Return a centesimal API value scaled to a regular number."""
@@ -513,17 +582,27 @@ class ZentralyApi:
         )
 
     async def get_device_config(self, device_serial: str) -> dict[str, Any]:
-        """Get device configuration."""
-        return await self.send_iot_command(
-            device_serial,
-            CMD_GET_CONFIG,
-            {"ids": CONFIG_IDS}
+        """Read validated config locally, with a cloud fallback for reads only."""
+        from .zttwf import parse_zttwf_config
+
+        local_key = self._local_keys.get(device_serial)
+        if local_key and self._local_client is not None:
+            try:
+                config = await self.get_local_device_config(device_serial, local_key)
+                parse_zttwf_config(config)
+                return {**config, "data_source": "local"}
+            except ZentralyApiError:
+                _LOGGER.debug("Local config unavailable; falling back to cloud read")
+        config = await self.send_iot_command(
+            device_serial, CMD_GET_CONFIG, {"ids": CONFIG_IDS},
         )
+        parse_zttwf_config(config)
+        return {**config, "data_source": "cloud"}
 
     async def set_target_temperature(self, device_serial: str, temperature: float) -> dict[str, Any]:
         """Set target temperature."""
         temp_value = round(temperature * TEMP_SCALE)
-        return await self.send_iot_command(
+        return await self._send_command_prefer_local(
             device_serial,
             CMD_SET_CONFIG,
             {"ids": [{"targetTemp": temp_value}]}
@@ -554,7 +633,7 @@ class ZentralyApi:
 
     async def set_hvac_mode(self, device_serial: str, mode: int) -> dict[str, Any]:
         """Set HVAC mode."""
-        return await self.send_iot_command(
+        return await self._send_command_prefer_local(
             device_serial,
             CMD_SET_CONFIG,
             {"ids": [{"thermostatMode": mode}]}
