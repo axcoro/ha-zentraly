@@ -12,7 +12,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_DEVICE_ID, CONF_EMAIL, CONF_PASSWORD
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import aiohttp_client
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -37,11 +37,15 @@ from .advanced import (
     async_apply_boiler_advanced,
     async_apply_thermostat_advanced,
 )
-from .api import ZentralyApi, ZentralyApiError, command_device_id
+from .api import ZentralyApi, ZentralyApiError, ZentralyAuthError, command_device_id
 from .const import (
     CONF_DEVICE_GUID,
+    CONF_FIREBASE_TOKEN,
+    CONF_TOKEN,
+    CONF_USER_ID,
     BOILER_DEVICE_TYPES,
     DEVICE_TYPE_ZTTIN01_THERMOSTAT,
+    DATA_REAUTH_DRAFTS,
     DOMAIN,
     PLATFORMS,
     SCAN_INTERVAL_SECONDS,
@@ -170,24 +174,47 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         uuid.uuid5(uuid.NAMESPACE_URL, f"{DOMAIN}:{entry.entry_id}")
     ).upper()
 
+    saved = dict(entry.data)
+    has_token = CONF_TOKEN in saved
+    # An existing token must never trigger a password-login fallback. Validate the
+    # original saved fields before constructor defaults can mask an incomplete import.
+    if has_token and (
+        not all(isinstance(saved.get(key), str) and saved[key].strip()
+                for key in (CONF_TOKEN, CONF_FIREBASE_TOKEN, CONF_DEVICE_GUID))
+        or type(saved.get(CONF_USER_ID)) is not int
+        or saved[CONF_USER_ID] <= 0
+    ):
+        raise ConfigEntryAuthFailed("Incomplete Zentraly session; reauthentication required")
+    if not saved.get(CONF_DEVICE_GUID):
+        hass.config_entries.async_update_entry(
+            entry, data={**entry.data, CONF_DEVICE_GUID: device_guid}
+        )
+
     api = ZentralyApi(
-        email=entry.data[CONF_EMAIL],
-        password=entry.data[CONF_PASSWORD],
+        email=saved.get(CONF_EMAIL),
+        password=saved.get(CONF_PASSWORD),
+        token=saved.get(CONF_TOKEN),
         session=session,
         device_guid=device_guid,
+        user_id=saved.get(CONF_USER_ID),
+        firebase_token=saved.get(CONF_FIREBASE_TOKEN),
     )
 
     hass.data.setdefault(DOMAIN, {})
     _async_register_services(hass)
 
-    # Authenticate
     try:
-        await api.authenticate()
-    except ZentralyApiError as err:
-        _LOGGER.error("Failed to authenticate with Zentraly: %s", err)
-        return False
-    except (aiohttp.ClientError, TimeoutError, OSError) as err:
-        raise ConfigEntryNotReady(f"Error connecting to Zentraly API: {err}") from err
+        if not has_token:
+            if not saved.get(CONF_PASSWORD):
+                raise ZentralyAuthError("No Zentraly session or password available")
+            await api.authenticate()
+            hass.config_entries.async_update_entry(
+                entry, data={**entry.data, **api.session_data()}
+            )
+    except ZentralyAuthError:
+        raise ConfigEntryAuthFailed("Zentraly authentication required") from None
+    except (ZentralyApiError, aiohttp.ClientError, TimeoutError, OSError):
+        raise ConfigEntryNotReady("Unable to connect to Zentraly") from None
 
     async def async_update_data():
         """Fetch data from API."""
@@ -195,13 +222,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             devices = await api.get_devices()
             await _async_enrich_raw_attrs(api, devices)
             return devices
-        except ZentralyApiError as err:
-            raise UpdateFailed(f"Error communicating with Zentraly API: {err}") from err
+        except ZentralyAuthError:
+            raise ConfigEntryAuthFailed("Zentraly authentication required") from None
+        except (ZentralyApiError, aiohttp.ClientError, TimeoutError, OSError):
+            raise UpdateFailed("Unable to update Zentraly data") from None
 
     coordinator = DataUpdateCoordinator(
         hass,
         _LOGGER,
         name="Zentraly",
+        config_entry=entry,
         update_method=async_update_data,
         update_interval=timedelta(seconds=SCAN_INTERVAL_SECONDS),
     )
@@ -212,11 +242,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id] = {
         "api": api,
         "coordinator": coordinator,
-        "drafts": AdvancedDraftStore(),
+        "drafts": hass.data.get(DATA_REAUTH_DRAFTS, {}).get(entry.entry_id) or AdvancedDraftStore(),
     }
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
+    # Consume only after the entire setup succeeds; failures retain the handoff.
+    pending = hass.data.get(DATA_REAUTH_DRAFTS, {})
+    pending.pop(entry.entry_id, None)
+    if not pending:
+        hass.data.pop(DATA_REAUTH_DRAFTS, None)
     return True
 
 
@@ -243,11 +278,12 @@ async def _async_enrich_raw_attrs(
                 )
             else:
                 continue
-        except ZentralyApiError as err:
+        except ZentralyAuthError:
+            raise
+        except ZentralyApiError:
             _LOGGER.warning(
-                "Failed to read raw attrs for Zentraly device %s: %s",
+                "Failed to read raw attrs for Zentraly device %s",
                 _safe_device_reference(device.get("serial")),
-                err,
             )
             continue
         except Exception as err:  # noqa: BLE001
@@ -306,71 +342,79 @@ def _async_register_services(hass: HomeAssistant) -> None:
 
     async def async_apply_thermostat_advanced_settings(call: ServiceCall) -> None:
         """Apply advanced ZTTIN01 settings from a service call."""
-        entry_data, device = _device_from_service_call(
-            hass,
-            call,
-            {DEVICE_TYPE_ZTTIN01_THERMOSTAT},
-        )
-        api: ZentralyApi = entry_data["api"]
-        coordinator: DataUpdateCoordinator = entry_data["coordinator"]
-        drafts: AdvancedDraftStore = entry_data["drafts"]
+        try:
+            entry_data, device = _device_from_service_call(
+                hass,
+                call,
+                {DEVICE_TYPE_ZTTIN01_THERMOSTAT},
+            )
+            api: ZentralyApi = entry_data["api"]
+            coordinator: DataUpdateCoordinator = entry_data["coordinator"]
+            drafts: AdvancedDraftStore = entry_data["drafts"]
 
-        dirty_keys = set(call.data) & THERMOSTAT_ADVANCED_KEYS
-        values = {
-            key: device.get(key)
-            for key in THERMOSTAT_ADVANCED_KEYS
-        }
-        for key in dirty_keys:
-            values[key] = call.data[key]
-        if THERMOSTAT_DISPLAY_TYPE in dirty_keys:
-            value = values[THERMOSTAT_DISPLAY_TYPE]
-            if isinstance(value, str):
-                values[THERMOSTAT_DISPLAY_TYPE] = 0 if value == "horario" else 1
+            dirty_keys = set(call.data) & THERMOSTAT_ADVANCED_KEYS
+            values = {
+                key: device.get(key)
+                for key in THERMOSTAT_ADVANCED_KEYS
+            }
+            for key in dirty_keys:
+                values[key] = call.data[key]
+            if THERMOSTAT_DISPLAY_TYPE in dirty_keys:
+                value = values[THERMOSTAT_DISPLAY_TYPE]
+                if isinstance(value, str):
+                    values[THERMOSTAT_DISPLAY_TYPE] = 0 if value == "horario" else 1
 
-        result = await async_apply_thermostat_advanced(
-            api,
-            coordinator,
-            drafts,
-            device,
-            values,
-            dirty_keys,
-        )
-        if not result.wrote:
-            return
+            result = await async_apply_thermostat_advanced(
+                api,
+                coordinator,
+                drafts,
+                device,
+                values,
+                dirty_keys,
+            )
+            if not result.wrote:
+                return
+        except ZentralyAuthError:
+            coordinator.config_entry.async_start_reauth(coordinator.hass)
+            raise ConfigEntryAuthFailed("Zentraly authentication required") from None
 
     async def async_apply_boiler_settings(call: ServiceCall) -> None:
         """Apply advanced boiler settings from a service call."""
-        entry_data, device = _device_from_service_call(
-            hass,
-            call,
-            BOILER_DEVICE_TYPES,
-        )
-        api: ZentralyApi = entry_data["api"]
-        coordinator: DataUpdateCoordinator = entry_data["coordinator"]
-        drafts: AdvancedDraftStore = entry_data["drafts"]
+        try:
+            entry_data, device = _device_from_service_call(
+                hass,
+                call,
+                BOILER_DEVICE_TYPES,
+            )
+            api: ZentralyApi = entry_data["api"]
+            coordinator: DataUpdateCoordinator = entry_data["coordinator"]
+            drafts: AdvancedDraftStore = entry_data["drafts"]
 
-        dirty_keys = set(call.data) & BOILER_ADVANCED_KEYS
-        values = {
-            key: device.get(key)
-            for key in BOILER_ADVANCED_KEYS
-        }
-        for key in dirty_keys:
-            values[key] = call.data[key]
-        if BOILER_WEATHER_TYPE in dirty_keys:
-            value = values[BOILER_WEATHER_TYPE]
-            if isinstance(value, str):
-                values[BOILER_WEATHER_TYPE] = 2 if value == "losa_radiante" else 3
+            dirty_keys = set(call.data) & BOILER_ADVANCED_KEYS
+            values = {
+                key: device.get(key)
+                for key in BOILER_ADVANCED_KEYS
+            }
+            for key in dirty_keys:
+                values[key] = call.data[key]
+            if BOILER_WEATHER_TYPE in dirty_keys:
+                value = values[BOILER_WEATHER_TYPE]
+                if isinstance(value, str):
+                    values[BOILER_WEATHER_TYPE] = 2 if value == "losa_radiante" else 3
 
-        result = await async_apply_boiler_advanced(
-            api,
-            coordinator,
-            drafts,
-            device,
-            values,
-            dirty_keys,
-        )
-        if not result.wrote:
-            return
+            result = await async_apply_boiler_advanced(
+                api,
+                coordinator,
+                drafts,
+                device,
+                values,
+                dirty_keys,
+            )
+            if not result.wrote:
+                return
+        except ZentralyAuthError:
+            coordinator.config_entry.async_start_reauth(coordinator.hass)
+            raise ConfigEntryAuthFailed("Zentraly authentication required") from None
 
     if not hass.services.has_service(DOMAIN, SERVICE_REFRESH_DEVICE):
         hass.services.async_register(
@@ -443,3 +487,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass.services.async_remove(DOMAIN, SERVICE_APPLY_BOILER_SETTINGS)
 
     return unload_ok
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Discard a pending reauth handoff when its config entry is removed."""
+    pending = hass.data.get(DATA_REAUTH_DRAFTS, {})
+    pending.pop(entry.entry_id, None)
+    if not pending:
+        hass.data.pop(DATA_REAUTH_DRAFTS, None)

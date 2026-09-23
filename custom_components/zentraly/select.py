@@ -6,6 +6,7 @@ from typing import Any
 
 from homeassistant.components.select import SelectEntity, SelectEntityDescription
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import (
@@ -31,7 +32,7 @@ from .advanced import (
     YES_NO_OPTIONS,
     YES_NO_TO_BOOL,
 )
-from .api import ZentralyApi, command_device_id
+from .api import ZentralyAuthError, ZentralyApi, command_device_id
 from .const import (
     BOILER_DEVICE_TYPES,
     DEVICE_TYPE_ZTTIN01_THERMOSTAT,
@@ -199,42 +200,46 @@ class ZentralyModeSelect(CoordinatorEntity, SelectEntity):
 
     async def async_select_option(self, option: str) -> None:
         """Set Zentraly mode."""
-        if option not in OPTION_TO_MODE:
-            return
+        try:
+            if option not in OPTION_TO_MODE:
+                return
 
-        mode = OPTION_TO_MODE[option]
-        expected_state: dict[str, Any] = {"mode": mode}
+            mode = OPTION_TO_MODE[option]
+            expected_state: dict[str, Any] = {"mode": mode}
 
-        if mode == ZTTIN01_MODE_MANUAL:
-            target_temperature = normal_heat_target_temperature(self._device_data)
-            await self._api.set_zttin01_target_temperature(
-                self._command_device_id,
+            if mode == ZTTIN01_MODE_MANUAL:
+                target_temperature = normal_heat_target_temperature(self._device_data)
+                await self._api.set_zttin01_target_temperature(
+                    self._command_device_id,
+                    self._device_mac,
+                    self._endpoint_id,
+                    target_temperature,
+                )
+                expected_state["target_temperature"] = target_temperature
+            else:
+                await self._api.set_zttin01_mode(
+                    self._command_device_id,
+                    self._device_mac,
+                    self._endpoint_id,
+                    mode,
+                )
+                if mode == ZTTIN01_MODE_OFF:
+                    expected_state["target_temperature"] = ZTTIN01_OFF_TEMPERATURE
+                elif mode == ZTTIN01_MODE_AWAY:
+                    expected_state["target_temperature"] = ZTTIN01_AWAY_TEMPERATURE
+
+            await refresh_zttin01_after_write(
+                self._api,
+                self.coordinator,
+                self._device_serial,
                 self._device_mac,
                 self._endpoint_id,
-                target_temperature,
+                expected_state,
+                command_device_id=self._command_device_id,
             )
-            expected_state["target_temperature"] = target_temperature
-        else:
-            await self._api.set_zttin01_mode(
-                self._command_device_id,
-                self._device_mac,
-                self._endpoint_id,
-                mode,
-            )
-            if mode == ZTTIN01_MODE_OFF:
-                expected_state["target_temperature"] = ZTTIN01_OFF_TEMPERATURE
-            elif mode == ZTTIN01_MODE_AWAY:
-                expected_state["target_temperature"] = ZTTIN01_AWAY_TEMPERATURE
-
-        await refresh_zttin01_after_write(
-            self._api,
-            self.coordinator,
-            self._device_serial,
-            self._device_mac,
-            self._endpoint_id,
-            expected_state,
-            command_device_id=self._command_device_id,
-        )
+        except ZentralyAuthError:
+            self.coordinator.config_entry.async_start_reauth(self.coordinator.hass)
+            raise ConfigEntryAuthFailed("Zentraly authentication required") from None
 
 
 class ZentralyDraftSelect(CoordinatorEntity, SelectEntity):

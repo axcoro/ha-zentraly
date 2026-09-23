@@ -7,7 +7,7 @@ from typing import Any
 
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
-from .api import ZentralyApi, ZentralyApiError
+from .api import ZentralyApi, ZentralyApiError, ZentralyAuthError
 from .const import ZTTIN01_DEFAULT_HEAT_TEMPERATURE, ZTTIN01_MODE_AWAY, ZTTIN01_OFF_TEMPERATURE
 
 ZTTIN01_STATE_KEYS = (
@@ -89,13 +89,15 @@ async def refresh_zttin01_after_write(
             device_mac,
             endpoint_id,
         )
-    except ZentralyApiError as err:
+    except ZentralyAuthError:
+        raise
+    except ZentralyApiError:
         if logger:
-            logger.warning("Failed to read ZTTIN01 state after write: %s", err)
+            logger.warning("Failed to read ZTTIN01 state after write")
         state = {}
-    except Exception as err:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
         if logger:
-            logger.warning("Unexpected error reading ZTTIN01 state after write: %s", err)
+            logger.warning("Unexpected error reading ZTTIN01 state after write")
         state = {}
 
     def unconfirmed_keys(actual_state: dict[str, Any]) -> set[str]:
@@ -118,13 +120,17 @@ async def refresh_zttin01_after_write(
                 device_mac,
                 endpoint_id,
             )
-        except ZentralyApiError as err:
+        except ZentralyAuthError as err:
+            err.confirmed_state = {**state, **err.confirmed_state}
+            apply_zttin01_state(coordinator, device_serial, err.confirmed_state)
+            raise
+        except ZentralyApiError:
             if logger:
-                logger.warning("Failed to retry ZTTIN01 state after write: %s", err)
+                logger.warning("Failed to retry ZTTIN01 state after write")
             retry_state = {}
-        except Exception as err:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             if logger:
-                logger.warning("Unexpected error retrying ZTTIN01 state after write: %s", err)
+                logger.warning("Unexpected error retrying ZTTIN01 state after write")
             retry_state = {}
 
         state.update(retry_state)

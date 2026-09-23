@@ -6,6 +6,17 @@
 
 Home Assistant custom integration for **Zentraly WiFi Thermostats** (by PEISA/FV Group - Argentina).
 
+## Candidate: selective upstream 1.0.5 — phase A
+
+The local integration stays at **1.1.0**. Phase A adds persistent sessions and
+same-account reauthentication while preserving advanced type-16/17 controls.
+Authentication failures in actions start reauth directly. Pending drafts survive
+reauth and setup retries in memory; restarting HA still discards them.
+
+This candidate passes offline checks; actual Home Assistant/cloud/device acceptance
+is pending. In particular, the identity fields returned by `/App` must be verified
+before accepting reauth live. See [phase A details and rollback](docs/upstream-105-phase-a.md).
+
 ## Features
 
 - Control your Zentraly thermostats from Home Assistant

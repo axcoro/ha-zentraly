@@ -10,7 +10,7 @@ from typing import Any
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .api import ZentralyApi
-from .api import ZentralyApiError
+from .api import ZentralyApiError, ZentralyAuthError
 from .api import command_device_id
 from .const import (
     DEVICE_TYPE_BOILER,
@@ -327,15 +327,20 @@ async def async_apply_thermostat_advanced(
         raise
 
     expected_state = {key: values.get(key) for key in applied_keys}
-    confirmed_state = await refresh_zttin01_after_write(
-        api,
-        coordinator,
-        device["serial"],
-        device.get("mac"),
-        device.get("endpoint_id") or ZTTIN01_DEFAULT_ENDPOINT,
-        expected_state,
-        command_device_id=command_target,
-    )
+    auth_error = None
+    try:
+        confirmed_state = await refresh_zttin01_after_write(
+            api,
+            coordinator,
+            device["serial"],
+            device.get("mac"),
+            device.get("endpoint_id") or ZTTIN01_DEFAULT_ENDPOINT,
+            expected_state,
+            command_device_id=command_target,
+        )
+    except ZentralyAuthError as err:
+        confirmed_state = err.confirmed_state
+        auth_error = err
 
     confirmed_keys = _confirmed_thermostat_keys(
         values,
@@ -353,6 +358,9 @@ async def async_apply_thermostat_advanced(
     if store:
         store.clear(device["serial"], confirmed_keys)
     _store_apply_result(store, coordinator, device["serial"], result)
+
+    if auth_error is not None:
+        raise auth_error
 
     if unconfirmed_keys:
         keys = ", ".join(sorted(unconfirmed_keys))
@@ -399,26 +407,34 @@ async def async_apply_boiler_advanced(
         raise
 
     confirmation_reads = _boiler_confirmation_reads(attrs_by_cluster)
-    confirmed_state, confirmation_error = await _read_boiler_confirmation(
-        api,
-        device_serial,
-        device.get("mac"),
-        endpoint_id,
-        confirmation_reads,
-    )
-    confirmed_keys = _confirmed_boiler_keys(values, applied_keys, confirmed_state)
-
-    if confirmed_keys != applied_keys and confirmation_error is None:
-        await asyncio.sleep(1)
-        retry_state, confirmation_error = await _read_boiler_confirmation(
+    confirmed_state: dict[str, Any] = {}
+    auth_error = None
+    try:
+        confirmed_state, confirmation_error = await _read_boiler_confirmation(
             api,
             device_serial,
             device.get("mac"),
             endpoint_id,
-            _boiler_confirmation_reads_for_keys(applied_keys - confirmed_keys),
+            confirmation_reads,
         )
-        confirmed_state.update(retry_state)
         confirmed_keys = _confirmed_boiler_keys(values, applied_keys, confirmed_state)
+
+        if confirmed_keys != applied_keys and confirmation_error is None:
+            await asyncio.sleep(1)
+            retry_state, confirmation_error = await _read_boiler_confirmation(
+                api,
+                device_serial,
+                device.get("mac"),
+                endpoint_id,
+                _boiler_confirmation_reads_for_keys(applied_keys - confirmed_keys),
+            )
+            confirmed_state.update(retry_state)
+            confirmed_keys = _confirmed_boiler_keys(values, applied_keys, confirmed_state)
+
+    except ZentralyAuthError as err:
+        confirmed_state.update(err.confirmed_state)
+        confirmed_keys = _confirmed_boiler_keys(values, applied_keys, confirmed_state)
+        auth_error = err
 
     unconfirmed_keys = applied_keys - confirmed_keys
     result = ApplyResult(
@@ -428,12 +444,16 @@ async def async_apply_boiler_advanced(
         unconfirmed_keys=unconfirmed_keys,
     )
 
-    await coordinator.async_request_refresh()
+    if auth_error is None:
+        await coordinator.async_request_refresh()
     if confirmed_state:
         _apply_boiler_state(coordinator, device["serial"], confirmed_state)
     if store:
         store.clear(device["serial"], confirmed_keys)
     _store_apply_result(store, coordinator, device["serial"], result)
+
+    if auth_error is not None:
+        raise auth_error
 
     if unconfirmed_keys:
         keys = ", ".join(sorted(unconfirmed_keys))
@@ -510,8 +530,10 @@ async def _read_boiler_confirmation(
             ),
             None,
         )
+    except ZentralyAuthError:
+        raise
     except Exception as err:  # noqa: BLE001
-        _LOGGER.warning("Unable to confirm boiler apply with readAttr: %s", err)
+        _LOGGER.warning("Unable to confirm boiler apply with readAttr")
         return {}, err
 
 
