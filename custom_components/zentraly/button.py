@@ -6,6 +6,7 @@ from typing import Any
 
 from homeassistant.components.button import ButtonEntity, ButtonEntityDescription
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import (
@@ -19,7 +20,7 @@ from .advanced import (
     async_apply_boiler_advanced,
     async_apply_thermostat_advanced,
 )
-from .api import ZentralyApi
+from .api import ZentralyAuthError, ZentralyApi
 from .const import (
     BOILER_DEVICE_TYPES,
     DEVICE_TYPE_ZTTIN01_THERMOSTAT,
@@ -137,43 +138,47 @@ class ZentralyAdvancedButton(CoordinatorEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Handle the button press."""
-        data = self._device_data
-        if data is None:
-            return
+        try:
+            data = self._device_data
+            if data is None:
+                return
 
-        if self.entity_description.kind == "refresh":
-            self._drafts.clear(self._device_serial)
-            await self.coordinator.async_request_refresh()
-            self.coordinator.async_update_listeners()
-            return
+            if self.entity_description.kind == "refresh":
+                self._drafts.clear(self._device_serial)
+                await self.coordinator.async_request_refresh()
+                self.coordinator.async_update_listeners()
+                return
 
-        dirty_keys = self._drafts.dirty_keys(self._device_serial)
-        if not dirty_keys:
-            return
+            dirty_keys = self._drafts.dirty_keys(self._device_serial)
+            if not dirty_keys:
+                return
 
-        values = self._drafts.values_for(
-            self._device_serial,
-            data,
-            advanced_keys_for_device(data),
-        )
-
-        if self._device_type == DEVICE_TYPE_ZTTIN01_THERMOSTAT:
-            await async_apply_thermostat_advanced(
-                self._api,
-                self.coordinator,
-                self._drafts,
+            values = self._drafts.values_for(
+                self._device_serial,
                 data,
-                values,
-                dirty_keys,
+                advanced_keys_for_device(data),
             )
-            return
 
-        if self._device_type in BOILER_DEVICE_TYPES:
-            await async_apply_boiler_advanced(
-                self._api,
-                self.coordinator,
-                self._drafts,
-                data,
-                values,
-                dirty_keys,
-            )
+            if self._device_type == DEVICE_TYPE_ZTTIN01_THERMOSTAT:
+                await async_apply_thermostat_advanced(
+                    self._api,
+                    self.coordinator,
+                    self._drafts,
+                    data,
+                    values,
+                    dirty_keys,
+                )
+                return
+
+            if self._device_type in BOILER_DEVICE_TYPES:
+                await async_apply_boiler_advanced(
+                    self._api,
+                    self.coordinator,
+                    self._drafts,
+                    data,
+                    values,
+                    dirty_keys,
+                )
+        except ZentralyAuthError:
+            self.coordinator.config_entry.async_start_reauth(self.coordinator.hass)
+            raise ConfigEntryAuthFailed("Zentraly authentication required") from None

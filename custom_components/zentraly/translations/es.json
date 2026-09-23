@@ -10,22 +10,22 @@
         }
       },
       "reauth_confirm": {
-        "title": "Reconectar Zentraly",
-        "description": "Ingresa una sesión vigente de tu cuenta de Zentraly. Se guardará en Home Assistant para reconectar automáticamente.",
+        "title": "Renovar sesión Zentraly",
+        "description": "Introduce aquí, en Home Assistant, el objeto JSON de sesión de la app oficial con token, user_id, firebase_token y device_guid. Debe pertenecer a la misma cuenta. Nunca pegues la sesión en un chat ni la compartas en logs. Obtener la sesión queda fuera de esta integración.",
         "data": {
-          "session": "Sesión de Zentraly"
+          "session": "Sesión de la app oficial (JSON)"
         }
       }
     },
     "error": {
-      "cannot_connect": "No se pudo conectar a los servidores de Zentraly",
-      "invalid_auth": "Zentraly rechazó las credenciales o la sesión",
-      "invalid_session": "La sesión está incompleta o tiene un formato incorrecto",
-      "wrong_account": "La sesión pertenece a otra cuenta de Zentraly"
+      "cannot_connect": "No se pudo conectar a Zentraly. La sesión guardada no se ha reemplazado.",
+      "invalid_auth": "Zentraly rechazó las credenciales o la sesión.",
+      "invalid_session": "Sesión incompleta o inválida. Revisa los cuatro campos y sus tipos.",
+      "wrong_account": "No se pudo verificar que la sesión pertenezca a la misma cuenta."
     },
     "abort": {
       "already_configured": "La cuenta ya esta configurada",
-      "reauth_successful": "Sesión actualizada"
+      "reauth_successful": "Sesión renovada correctamente."
     }
   },
   "entity": {
