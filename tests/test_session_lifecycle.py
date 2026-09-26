@@ -178,6 +178,20 @@ class SessionLifecycleTests(unittest.IsolatedAsyncioTestCase):
                     with self.assertRaises(AuthError):
                         await integration._async_enrich_device_state(api, [{"serial": "synthetic-child", "device_type": device_type}])
 
+    async def test_poll_prefers_direct_away_read_over_stale_app(self):
+        api = api_module.ZentralyApi()
+        for attrs, expected in (([{"id": 17, "type": 41, "val": 1900}], 19.0), ([], 18.0)):
+            with self.subTest(attrs=attrs):
+                device = {"serial": "synthetic-child", "device_type": 16, "away_temperature": 18.0}
+                with patch.object(api, "send_read_attr_command", side_effect=[
+                    {"attrs": attrs}, {"attrs": []},
+                ]) as read:
+                    await integration._async_enrich_device_state(api, [device])
+                self.assertEqual(expected, device["away_temperature"])
+                self.assertEqual(2, read.call_count)
+                if attrs:
+                    self.assertEqual(1900, device["raw_attr_65513_17"])
+
     async def test_entity_write_auth_starts_reauth_without_inventory_refresh(self):
         _, session = await self.setup_with(ACCOUNT | SESSION, [FakeResponse(200, INVENTORY),
                        FakeResponse(401, {}), FakeResponse(200, INVENTORY)])

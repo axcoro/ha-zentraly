@@ -801,6 +801,9 @@ class ZentralyApi:
             state[f"raw_attr_{cluster}_{attr_id}"] = value
             self._add_boiler_semantic_attr(state, cluster, attr_id, attr)
 
+        if cluster == ZTTIN01_CLUSTER_THERMOSTAT:
+            state.update(self._parse_zttin01_read_attr_response(response))
+
         return state
 
     def _add_boiler_semantic_attr(
