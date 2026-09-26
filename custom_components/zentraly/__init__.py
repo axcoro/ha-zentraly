@@ -409,6 +409,11 @@ def _async_register_services(hass: HomeAssistant) -> None:
             drafts: AdvancedDraftStore = entry_data["drafts"]
 
             dirty_keys = set(call.data) & BOILER_ADVANCED_KEYS
+            _LOGGER.debug(
+                "Boiler apply service requested: device_type=%s fields=%s",
+                device.get("device_type"),
+                sorted(dirty_keys),
+            )
             values = {
                 key: device.get(key)
                 for key in BOILER_ADVANCED_KEYS

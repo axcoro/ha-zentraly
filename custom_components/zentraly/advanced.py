@@ -385,16 +385,42 @@ async def async_apply_boiler_advanced(
         return ApplyResult(wrote=False, applied_keys=set())
 
     device_serial = command_device_id(device)
+    route = "parent" if device_serial != device["serial"] else "child"
     endpoint_id = device.get("endpoint_id") or ZTTIN01_DEFAULT_ENDPOINT
     try:
         for cluster, attrs in attrs_by_cluster.items():
-            await api.send_write_attr_command(
-                device_serial,
-                device.get("mac"),
+            fields = sorted(
+                key for key in applied_keys if BOILER_KEY_TO_ATTR[key][0] == cluster
+            )
+            attr_ids = [attr["id"] for attr in attrs]
+            _LOGGER.debug(
+                "Boiler apply write starting: cluster=%s fields=%s attrs=%s route=%s",
                 cluster,
-                endpoint_id,
-                attrs,
-                timeout=ZTTIN01_COMMAND_TIMEOUT,
+                fields,
+                attr_ids,
+                route,
+            )
+            try:
+                await api.send_write_attr_command(
+                    device_serial,
+                    device.get("mac"),
+                    cluster,
+                    endpoint_id,
+                    attrs,
+                    timeout=ZTTIN01_COMMAND_TIMEOUT,
+                )
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug(
+                    "Boiler apply write failed: cluster=%s fields=%s error_type=%s",
+                    cluster,
+                    fields,
+                    type(err).__name__,
+                )
+                raise
+            _LOGGER.debug(
+                "Boiler apply write response received: cluster=%s fields=%s",
+                cluster,
+                fields,
             )
     except (ZentralyApiError, ValueError):
         result = ApplyResult(
@@ -420,6 +446,11 @@ async def async_apply_boiler_advanced(
         confirmed_keys = _confirmed_boiler_keys(values, applied_keys, confirmed_state)
 
         if confirmed_keys != applied_keys and confirmation_error is None:
+            retry_keys = applied_keys - confirmed_keys
+            _LOGGER.debug(
+                "Boiler apply repeating confirmation read only: fields=%s",
+                sorted(retry_keys),
+            )
             await asyncio.sleep(1)
             retry_state, confirmation_error = await _read_boiler_confirmation(
                 api,
@@ -437,6 +468,16 @@ async def async_apply_boiler_advanced(
         auth_error = err
 
     unconfirmed_keys = applied_keys - confirmed_keys
+    _LOGGER.debug(
+        "Boiler apply confirmation summary: confirmed=%s unconfirmed=%s "
+        "expected_actual=%s",
+        sorted(confirmed_keys),
+        sorted(unconfirmed_keys),
+        {
+            key: (values.get(key), confirmed_state.get(key))
+            for key in sorted(applied_keys)
+        },
+    )
     result = ApplyResult(
         wrote=True,
         applied_keys=applied_keys,
@@ -520,20 +561,45 @@ async def _read_boiler_confirmation(
     reads: dict[int, list[dict[str, Any]]],
 ) -> tuple[dict[str, Any], Exception | None]:
     """Read boiler settings without turning a failed read into a write retry."""
+    requested_attrs = {
+        cluster: [attr["id"] for attr in attrs]
+        for cluster, attrs in reads.items()
+    }
+    _LOGGER.debug(
+        "Boiler confirmation read starting: clusters=%s attrs=%s",
+        sorted(reads),
+        requested_attrs,
+    )
     try:
-        return (
-            await api.read_boiler_advanced_state(
-                device_serial,
-                device_mac,
-                endpoint_id,
-                reads,
-            ),
-            None,
+        state = await api.read_boiler_advanced_state(
+            device_serial,
+            device_mac,
+            endpoint_id,
+            reads,
         )
-    except ZentralyAuthError:
+        semantic_state = {
+            key: value for key, value in state.items() if key in BOILER_KEY_TO_ATTR
+        }
+        _LOGGER.debug(
+            "Boiler confirmation read completed: values=%s",
+            semantic_state,
+        )
+        return state, None
+    except ZentralyAuthError as err:
+        _LOGGER.debug(
+            "Boiler confirmation read requires reauthentication: "
+            "clusters=%s error_type=%s",
+            sorted(reads),
+            type(err).__name__,
+        )
         raise
     except Exception as err:  # noqa: BLE001
         _LOGGER.warning("Unable to confirm boiler apply with readAttr")
+        _LOGGER.debug(
+            "Boiler confirmation read failed: clusters=%s error_type=%s",
+            sorted(reads),
+            type(err).__name__,
+        )
         return {}, err
 
 

@@ -1,6 +1,7 @@
 """Button platform for Zentraly devices."""
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -27,6 +28,8 @@ from .const import (
     DOMAIN,
 )
 from .zttin01 import get_device_data
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -141,6 +144,12 @@ class ZentralyAdvancedButton(CoordinatorEntity, ButtonEntity):
         try:
             data = self._device_data
             if data is None:
+                if self.entity_description.kind == "apply_advanced_settings":
+                    _LOGGER.debug(
+                        "Advanced apply button skipped: no current device data "
+                        "(device_type=%s)",
+                        self._device_type,
+                    )
                 return
 
             if self.entity_description.kind == "refresh":
@@ -151,7 +160,18 @@ class ZentralyAdvancedButton(CoordinatorEntity, ButtonEntity):
 
             dirty_keys = self._drafts.dirty_keys(self._device_serial)
             if not dirty_keys:
+                _LOGGER.debug(
+                    "Advanced apply button skipped: no pending fields "
+                    "(device_type=%s)",
+                    self._device_type,
+                )
                 return
+
+            _LOGGER.debug(
+                "Advanced apply button dispatch: device_type=%s fields=%s",
+                self._device_type,
+                sorted(dirty_keys),
+            )
 
             values = self._drafts.values_for(
                 self._device_serial,
