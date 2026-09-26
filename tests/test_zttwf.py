@@ -99,31 +99,48 @@ class ZttwfParserTests(unittest.TestCase):
 
 
 class ZttwfEnrichmentTests(unittest.IsolatedAsyncioTestCase):
-    async def enrich(self, api, devices):
+    async def enrich(self, api, fixtures):
+        """Exercise inventory/live type-2 reads before optional type-16/17 reads."""
         self.assertTrue(hasattr(smoke.integration, "_async_enrich_device_state"), "Family enrichment not implemented")
+        inventory = {"ioData": {"ioUser": {"coUbications": [{"coZones": [{
+            "coDevices": [{
+                "ioDCModel": {
+                    "ivstrDeviceSerial": device["serial"],
+                    "ivstrParentDeviceSerial": device.get("parent_serial"),
+                    "ivnroDeviceType": device["device_type"],
+                    "ivblnDeviceConnected": device.get("connected", False),
+                    "ivstrDeviceMac": device.get("mac"),
+                    "ivnumEndPoint": device.get("endpoint_id"),
+                },
+                "ioSubTypeObj": {"ioDCModel": {}},
+            } for device in fixtures],
+        }]}]}}}
+        with patch.object(api, "get_user_data", return_value=inventory):
+            devices = await api.get_devices()
         await smoke.integration._async_enrich_device_state(api, devices)
+        return devices
 
     async def test_cloud_reader_routes_parent_and_falls_back_to_child(self):
         self.assertIsNotNone(zttwf, "Type-2 reader not implemented")
         api = smoke.integration.ZentralyApi(token="synthetic-token")
         with patch.object(api, "get_device_config", return_value=CONFIG) as get:
-            self.assertEqual(STATE, await zttwf.read_zttwf_state(api, DEVICE))
-            self.assertEqual(STATE, await zttwf.read_zttwf_state(api, DEVICE | {"parent_serial": None}))
+            devices = await self.enrich(api, [DEVICE, DEVICE | {"parent_serial": None}])
+        self.assertEqual([STATE, STATE], [{key: device[key] for key in STATE} for device in devices])
         self.assertEqual(["SYNTHETIC-PARENT", "SYNTHETIC-CHILD"], [call.args[0] for call in get.await_args_list])
 
     async def test_mixed_account_reads_each_family_once_and_keeps_other_semantics(self):
         api = smoke.integration.ZentralyApi(token="synthetic-token")
-        devices = [copy.deepcopy(DEVICE), copy.deepcopy(smoke.DEVICES[1]), copy.deepcopy(smoke.DEVICES[2])]
+        fixtures = [DEVICE, smoke.DEVICES[1], smoke.DEVICES[2]]
         with patch.object(api, "get_device_config", return_value=CONFIG) as get, \
                 patch.object(api, "read_zttin01_raw_attrs", return_value={"heat_demand": True}) as read16, \
                 patch.object(api, "read_boiler_raw_attrs", return_value={"on_delay": 2.0}) as read17:
-            await self.enrich(api, devices)
+            devices = await self.enrich(api, fixtures)
         get.assert_awaited_once_with("SYNTHETIC-PARENT")
         read16.assert_awaited_once()
         read17.assert_awaited_once()
         self.assertEqual(STATE, {key: devices[0][key] for key in STATE})
         self.assertTrue(devices[0]["connected"])
-        self.assertEqual("cloud_get_config", devices[0]["data_source"])
+        self.assertEqual("cloud", devices[0]["data_source"])
         self.assertTrue(devices[1]["heat_demand"])
         self.assertEqual(2.0, devices[2]["on_delay"])
         self.assertNotIn("data_source", devices[1])
@@ -134,10 +151,10 @@ class ZttwfEnrichmentTests(unittest.IsolatedAsyncioTestCase):
                       OSError("synthetic-secret"), {"status": 200, "ids": []}):
             with self.subTest(error_type=type(error).__name__):
                 api = smoke.integration.ZentralyApi(token="synthetic-token")
-                devices = [copy.deepcopy(DEVICE), copy.deepcopy(DEVICE | {"serial": "SYNTHETIC-SIBLING"})]
+                fixtures = [DEVICE, DEVICE | {"serial": "SYNTHETIC-SIBLING"}]
                 with patch.object(api, "get_device_config", side_effect=[error, CONFIG]) as get:
-                    with self.assertLogs(smoke.integration.__name__, level="WARNING") as logs:
-                        await self.enrich(api, devices)
+                    with self.assertLogs("custom_components.zentraly.api", level="DEBUG") as logs:
+                        devices = await self.enrich(api, fixtures)
                 self.assertEqual(2, get.await_count)
                 self.assertFalse(devices[0]["connected"])
                 self.assertEqual("unavailable", devices[0]["data_source"])
@@ -145,20 +162,27 @@ class ZttwfEnrichmentTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(23.1, devices[1]["current_temperature"])
                 self.assertNotIn("synthetic-secret", "\n".join(logs.output))
 
-    async def test_auth_aborts_cycle_without_read_retry_or_sibling_call(self):
+    async def test_auth_aborts_cycle_without_retrying_concurrent_sibling_reads(self):
         api = smoke.integration.ZentralyApi(token="synthetic-token")
-        with patch.object(api, "get_device_config", side_effect=AuthError("expired")) as get:
+        fixtures = [DEVICE, DEVICE | {"serial": "SYNTHETIC-SIBLING", "parent_serial": "OTHER-PARENT"},
+                    smoke.DEVICES[1]]
+        with patch.object(api, "get_device_config", side_effect=[AuthError("expired"), CONFIG]) as get, \
+                patch.object(api, "read_zttin01_raw_attrs") as read16:
             with self.assertRaises(AuthError):
-                await self.enrich(api, [copy.deepcopy(DEVICE), DEVICE | {"serial": "SYNTHETIC-SIBLING"}])
-        self.assertEqual(1, get.await_count)
+                await self.enrich(api, fixtures)
+        # Upstream starts type-2 reads together; either may finish before auth
+        # aborts the cycle, but neither target is read a second time.
+        self.assertEqual(["SYNTHETIC-PARENT", "OTHER-PARENT"], [call.args[0] for call in get.await_args_list])
+        read16.assert_not_awaited()
 
     async def test_optional_type16_17_read_failure_does_not_change_availability(self):
         api = smoke.integration.ZentralyApi(token="synthetic-token")
-        devices = copy.deepcopy(smoke.DEVICES[1:])
-        with patch.object(api, "read_zttin01_raw_attrs", new=AsyncMock(side_effect=ApiError("offline"))), \
+        with patch.object(api, "get_device_config") as get, \
+                patch.object(api, "read_zttin01_raw_attrs", new=AsyncMock(side_effect=ApiError("offline"))), \
                 patch.object(api, "read_boiler_raw_attrs", new=AsyncMock(side_effect=ApiError("offline"))):
             with self.assertLogs(smoke.integration.__name__, level="WARNING"):
-                await self.enrich(api, devices)
+                devices = await self.enrich(api, smoke.DEVICES[1:])
+        get.assert_not_awaited()
         self.assertTrue(all(device["connected"] for device in devices))
 
 

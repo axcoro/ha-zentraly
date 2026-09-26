@@ -131,6 +131,7 @@ def _install_dependency_stubs() -> None:
 
     core = _module("homeassistant.core")
     core.HomeAssistant = type("HomeAssistant", (), {})
+    core.callback = lambda method: method
 
     class ServiceCall:
         def __init__(self, data: dict | None = None) -> None:
@@ -181,6 +182,15 @@ def _install_dependency_stubs() -> None:
         def __init__(self, coordinator) -> None:
             self.coordinator = coordinator
 
+        async def async_added_to_hass(self) -> None:
+            pass
+
+        def _handle_coordinator_update(self) -> None:
+            pass
+
+        def async_write_ha_state(self) -> None:
+            pass
+
         @property
         def available(self) -> bool:
             return bool(getattr(self.coordinator, "last_update_success", True))
@@ -188,6 +198,16 @@ def _install_dependency_stubs() -> None:
     update_coordinator.CoordinatorEntity = CoordinatorEntity
     update_coordinator.DataUpdateCoordinator = object
     update_coordinator.UpdateFailed = type("UpdateFailed", (Exception,), {})
+
+    class RestoreEntity:
+        async def async_get_last_state(self):
+            return None
+
+    _module("homeassistant.helpers.restore_state").RestoreEntity = RestoreEntity
+    components.zeroconf = _module("homeassistant.components.zeroconf")
+    zeroconf_asyncio = _module("zeroconf.asyncio")
+    zeroconf_asyncio.AsyncServiceBrowser = object
+    zeroconf_asyncio.AsyncServiceInfo = object
 
     @dataclass(frozen=True, kw_only=True)
     class EntityDescription:

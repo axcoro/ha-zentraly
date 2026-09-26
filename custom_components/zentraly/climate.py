@@ -16,8 +16,9 @@ from homeassistant.const import (
     UnitOfTemperature,
 )
 from homeassistant.exceptions import ConfigEntryAuthFailed
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
     DataUpdateCoordinator,
@@ -72,7 +73,7 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-class ZentralyThermostat(CoordinatorEntity, ClimateEntity):
+class ZentralyThermostat(CoordinatorEntity, ClimateEntity, RestoreEntity):
     """Zentraly thermostat entity."""
 
     _attr_has_entity_name = True
@@ -104,6 +105,9 @@ class ZentralyThermostat(CoordinatorEntity, ClimateEntity):
         self._endpoint_id = device.get("endpoint_id") or ZTTIN01_DEFAULT_ENDPOINT
         self._attr_unique_id = f"zentraly_{device['serial']}"
         self._attr_name = device.get("name", "Thermostat")
+        self._last_heating_temperature: float | None = None
+        self._changing_mode = False
+        self._remember_heating_temperature()
 
         if self._is_zttin01:
             self._attr_supported_features = (
@@ -127,6 +131,29 @@ class ZentralyThermostat(CoordinatorEntity, ClimateEntity):
             ),
             "sw_version": device.get("firmware"),
         }
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the type-2 heating target when its live OFF target is 5 C."""
+        await super().async_added_to_hass()
+        if (not self._is_zttin01 and self._last_heating_temperature is None
+                and (state := await self.async_get_last_state())):
+            value = state.attributes.get("last_heating_temperature")
+            if type(value) in (int, float) and self._attr_min_temp <= value <= self._attr_max_temp:
+                self._last_heating_temperature = value
+
+    @callback
+    def _remember_heating_temperature(self) -> None:
+        """Remember observed type-2 heating targets, never a requested value."""
+        value = self.target_temperature
+        if (not self._is_zttin01 and not self._changing_mode and self.available
+                and self.hvac_mode == HVACMode.HEAT and type(value) in (int, float)
+                and self._attr_min_temp <= value <= self._attr_max_temp):
+            self._last_heating_temperature = value
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        self._remember_heating_temperature()
+        super()._handle_coordinator_update()
 
     @property
     def _is_zttin01(self) -> bool:
@@ -158,6 +185,17 @@ class ZentralyThermostat(CoordinatorEntity, ClimateEntity):
         if data := self._device_data:
             return data.get("humidity")
         return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Expose transport and retain the type-2 heating target across restarts."""
+        data = self._device_data
+        attributes = {
+            "data_source": data.get("data_source", "cloud_snapshot") if data else "unavailable",
+        }
+        if not self._is_zttin01:
+            attributes["last_heating_temperature"] = self._last_heating_temperature
+        return attributes
 
     @property
     def hvac_mode(self) -> HVACMode | None:
@@ -240,7 +278,12 @@ class ZentralyThermostat(CoordinatorEntity, ClimateEntity):
                 )
                 return
             await self._api.set_target_temperature(self._command_device_id, temperature)
-            await self._refresh_zttwf_after_write({"target_temperature": temperature})
+            state = await self._refresh_zttwf_after_write({"target_temperature": temperature})
+            # A confirmed target selected while OFF becomes the next heating target.
+            value = state["target_temperature"]
+            if self._attr_min_temp <= value <= self._attr_max_temp:
+                self._last_heating_temperature = value
+                self.async_write_ha_state()
         except ZentralyAuthError:
             self.coordinator.config_entry.async_start_reauth(self.coordinator.hass)
             raise ConfigEntryAuthFailed("Zentraly authentication required") from None
@@ -286,14 +329,25 @@ class ZentralyThermostat(CoordinatorEntity, ClimateEntity):
                 await self._refresh_zttin01_after_write(expected_state)
                 return
 
-            if hvac_mode == HVACMode.HEAT:
-                await self._api.turn_on(self._command_device_id)
-                expected_state = {"mode": ZTTWF_MODE_MANUAL}
-            elif hvac_mode == HVACMode.OFF:
-                await self._api.turn_off(self._command_device_id)
-                expected_state = {"mode": ZTTWF_MODE_OFF}
-            else:
+            if hvac_mode not in (HVACMode.HEAT, HVACMode.OFF):
                 return
+            self._remember_heating_temperature()
+            restore_target = (
+                self._last_heating_temperature if self.hvac_mode == HVACMode.OFF else None
+            )
+            self._changing_mode = True
+            try:
+                if hvac_mode == HVACMode.HEAT:
+                    await self._api.turn_on(self._command_device_id)
+                    expected_state = {"mode": ZTTWF_MODE_MANUAL}
+                    if restore_target is not None:
+                        await self._api.set_target_temperature(self._command_device_id, restore_target)
+                        expected_state["target_temperature"] = restore_target
+                else:
+                    await self._api.turn_off(self._command_device_id)
+                    expected_state = {"mode": ZTTWF_MODE_OFF}
+            finally:
+                self._changing_mode = False
             await self._refresh_zttwf_after_write(expected_state)
         except ZentralyAuthError:
             self.coordinator.config_entry.async_start_reauth(self.coordinator.hass)
@@ -335,9 +389,9 @@ class ZentralyThermostat(CoordinatorEntity, ClimateEntity):
             self.coordinator.config_entry.async_start_reauth(self.coordinator.hass)
             raise ConfigEntryAuthFailed("Zentraly authentication required") from None
 
-    async def _refresh_zttwf_after_write(self, expected_state: dict[str, Any]) -> None:
+    async def _refresh_zttwf_after_write(self, expected_state: dict[str, Any]) -> dict[str, Any]:
         """Read the same command target as the write; publish by child identity."""
-        await refresh_zttwf_after_write(
+        return await refresh_zttwf_after_write(
             self._api,
             self.coordinator,
             {"serial": self._device_serial, "iot_hub_device_id": self._command_device_id},

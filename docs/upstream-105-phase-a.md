@@ -1,5 +1,9 @@
 # Phase A — persistent sessions and reauth
 
+> Historical stack record (2026-09-22). The current local candidate is the
+> [real upstream rebase](upstream-rebase-local.md); these branch/base references
+> do not identify the new deployment candidate.
+
 Component 1.1.0; config entry version 5. PR base/rollback:
 79cd7bd8795bf958bd743f92c50d02ae2f89ff89 (public main).
 Branch: codex/upstream-105-a-session. Exact immutable heads and component hashes are

@@ -1,69 +1,15 @@
 """Focused tests for advanced Zentraly write confirmation."""
 from __future__ import annotations
 
-import importlib.util
-from pathlib import Path
 import sys
-import types
 import unittest
 from unittest.mock import AsyncMock, patch
 
 
-ROOT = Path(__file__).resolve().parents[1]
-PACKAGE_PATH = ROOT / "custom_components" / "zentraly"
+from test_platform_smoke import advanced
 
-
-def _load_module(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"Unable to load {name}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-custom_components = types.ModuleType("custom_components")
-custom_components.__path__ = [str(ROOT / "custom_components")]
-sys.modules.setdefault("custom_components", custom_components)
-
-zentraly_package = types.ModuleType("custom_components.zentraly")
-zentraly_package.__path__ = [str(PACKAGE_PATH)]
-sys.modules.setdefault("custom_components.zentraly", zentraly_package)
-
-aiohttp = types.ModuleType("aiohttp")
-aiohttp.ClientSession = object
-aiohttp.ClientError = type("ClientError", (Exception,), {})
-sys.modules.setdefault("aiohttp", aiohttp)
-
-homeassistant = types.ModuleType("homeassistant")
-homeassistant.__path__ = []
-sys.modules.setdefault("homeassistant", homeassistant)
-
-homeassistant_const = types.ModuleType("homeassistant.const")
-homeassistant_const.Platform = types.SimpleNamespace(
-    CLIMATE="climate",
-    SENSOR="sensor",
-    BINARY_SENSOR="binary_sensor",
-    NUMBER="number",
-    SELECT="select",
-    LOCK="lock",
-    BUTTON="button",
-)
-sys.modules.setdefault("homeassistant.const", homeassistant_const)
-
-homeassistant_helpers = types.ModuleType("homeassistant.helpers")
-homeassistant_helpers.__path__ = []
-sys.modules.setdefault("homeassistant.helpers", homeassistant_helpers)
-
-update_coordinator = types.ModuleType("homeassistant.helpers.update_coordinator")
-update_coordinator.DataUpdateCoordinator = object
-sys.modules.setdefault("homeassistant.helpers.update_coordinator", update_coordinator)
-
-_load_module("custom_components.zentraly.const", PACKAGE_PATH / "const.py")
-api_module = _load_module("custom_components.zentraly.api", PACKAGE_PATH / "api.py")
-zttin01_module = _load_module("custom_components.zentraly.zttin01", PACKAGE_PATH / "zttin01.py")
-advanced = _load_module("custom_components.zentraly.advanced", PACKAGE_PATH / "advanced.py")
+api_module = sys.modules["custom_components.zentraly.api"]
+zttin01_module = sys.modules["custom_components.zentraly.zttin01"]
 
 
 class FakeCoordinator:

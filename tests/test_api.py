@@ -1,12 +1,9 @@
 """Tests for the Zentraly API client."""
 from __future__ import annotations
 
-import importlib.util
 import base64
 import json
-from pathlib import Path
 import sys
-import types
 import unittest
 from unittest.mock import patch
 
@@ -14,55 +11,13 @@ from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 
-ROOT = Path(__file__).resolve().parents[1]
-PACKAGE_PATH = ROOT / "custom_components" / "zentraly"
+# Reuse the full harness so every test sees the same API/error classes.
+from test_platform_smoke import integration
 
-
-def _load_module(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"Unable to load {name}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-custom_components = types.ModuleType("custom_components")
-custom_components.__path__ = [str(ROOT / "custom_components")]
-sys.modules.setdefault("custom_components", custom_components)
-
-zentraly_package = types.ModuleType("custom_components.zentraly")
-zentraly_package.__path__ = [str(PACKAGE_PATH)]
-sys.modules.setdefault("custom_components.zentraly", zentraly_package)
-
-aiohttp = types.ModuleType("aiohttp")
-aiohttp.ClientSession = object
-aiohttp.ClientError = type("ClientError", (Exception,), {})
-sys.modules.setdefault("aiohttp", aiohttp)
-
-homeassistant = types.ModuleType("homeassistant")
-homeassistant.__path__ = []
-sys.modules.setdefault("homeassistant", homeassistant)
-
-homeassistant_const = types.ModuleType("homeassistant.const")
-homeassistant_const.Platform = types.SimpleNamespace(
-    CLIMATE="climate",
-    SENSOR="sensor",
-    BINARY_SENSOR="binary_sensor",
-    NUMBER="number",
-    SELECT="select",
-    LOCK="lock",
-    BUTTON="button",
-)
-sys.modules.setdefault("homeassistant.const", homeassistant_const)
-
-_load_module("custom_components.zentraly.const", PACKAGE_PATH / "const.py")
-api_module = _load_module("custom_components.zentraly.api", PACKAGE_PATH / "api.py")
-
-ZentralyApi = api_module.ZentralyApi
-ZentralyApiError = api_module.ZentralyApiError
-command_device_id = getattr(api_module, "command_device_id", None)
+api_module = sys.modules["custom_components.zentraly.api"]
+ZentralyApi = integration.ZentralyApi
+ZentralyApiError = integration.ZentralyApiError
+command_device_id = api_module.command_device_id
 const_module = sys.modules["custom_components.zentraly.const"]
 
 

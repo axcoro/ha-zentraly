@@ -1,25 +1,28 @@
 """Zentraly Thermostat integration for Home Assistant."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from datetime import timedelta
 
-import voluptuous as vol
-
 import aiohttp
+import voluptuous as vol
+from homeassistant.components import zeroconf
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_DEVICE_ID, CONF_EMAIL, CONF_PASSWORD
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.exceptions import HomeAssistantError
-from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.exceptions import (
+    ConfigEntryAuthFailed,
+    ConfigEntryNotReady,
+    HomeAssistantError,
+)
 from homeassistant.helpers import aiohttp_client
 from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from zeroconf.asyncio import AsyncServiceBrowser, AsyncServiceInfo
 
 from .advanced import (
-    AdvancedDraftStore,
     BOILER_ADVANCED_KEYS,
     BOILER_COMFORT_MODE,
     BOILER_FORCED_ON,
@@ -34,19 +37,19 @@ from .advanced import (
     THERMOSTAT_DISPLAY_BRIGHTNESS,
     THERMOSTAT_DISPLAY_TYPE,
     THERMOSTAT_TEMPERATURE_OFFSET,
+    AdvancedDraftStore,
     async_apply_boiler_advanced,
     async_apply_thermostat_advanced,
 )
 from .api import ZentralyApi, ZentralyApiError, ZentralyAuthError, command_device_id
 from .const import (
+    BOILER_DEVICE_TYPES,
     CONF_DEVICE_GUID,
     CONF_FIREBASE_TOKEN,
     CONF_TOKEN,
     CONF_USER_ID,
-    BOILER_DEVICE_TYPES,
-    DEVICE_TYPE_THERMOSTAT,
-    DEVICE_TYPE_ZTTIN01_THERMOSTAT,
     DATA_REAUTH_DRAFTS,
+    DEVICE_TYPE_ZTTIN01_THERMOSTAT,
     DOMAIN,
     PLATFORMS,
     SCAN_INTERVAL_SECONDS,
@@ -55,33 +58,12 @@ from .const import (
     SERVICE_REFRESH_DEVICE,
     ZTTIN01_DEFAULT_ENDPOINT,
 )
-
-from .zttwf import read_zttwf_state
+from .local import ZentralyLocalClient
 
 _LOGGER = logging.getLogger(__name__)
 
-_REDUNDANT_ENTITY_SUFFIXES = frozenset({
-    "is_locked",
-    "display_always_on",
-    "is_forced_on",
-    "is_h2o_enabled",
-    "is_comfort_mode",
-    "target_temperature",
-    "temperature_offset",
-    "away_temperature",
-    "display_brightness",
-    "display_type",
-    "boiler_heating_temperature",
-    "boiler_h2o_temperature",
-    "on_delay",
-    "weather_type",
-    "mode",
-    "attr_65006_200",
-    "attr_65000_1111",
-    "is_on",
-    "heating_on_time_today",
-    "schedule",
-})
+ZEROCONF_SERVICE_TYPE = "_zentraly._tcp.local."
+ZEROCONF_TIMEOUT_MS = 3000
 
 
 def _safe_device_reference(serial: object) -> str:
@@ -111,67 +93,17 @@ APPLY_BOILER_SCHEMA = vol.Schema({
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Remove obsolete read-only mirrors of advanced configuration controls."""
+    """Adopt existing entries without removing entities or changing identity."""
     if entry.version > 5:
         _LOGGER.error("Unsupported Zentraly config entry version: %s", entry.version)
         return False
-
-    if entry.version < 3:
-        entity_registry = er.async_get(hass)
-        removed = 0
-        for registry_entry in er.async_entries_for_config_entry(
-            entity_registry,
-            entry.entry_id,
-        ):
-            if _is_redundant_configuration_entity(registry_entry.unique_id):
-                entity_registry.async_remove(registry_entry.entity_id)
-                removed += 1
-
-        hass.config_entries.async_update_entry(entry, version=3)
-        _LOGGER.info("Removed %s redundant Zentraly configuration entities", removed)
-
-    if entry.version < 4:
-        entity_registry = er.async_get(hass)
-        removed = 0
-        for registry_entry in er.async_entries_for_config_entry(
-            entity_registry,
-            entry.entry_id,
-        ):
-            if registry_entry.unique_id.endswith(("_is_on", "_heating_on_time_today")):
-                entity_registry.async_remove(registry_entry.entity_id)
-                removed += 1
-
-        hass.config_entries.async_update_entry(entry, version=4)
-        _LOGGER.info("Removed %s obsolete demand entity entries", removed)
-
     if entry.version < 5:
-        entity_registry = er.async_get(hass)
-        removed = 0
-        for registry_entry in er.async_entries_for_config_entry(
-            entity_registry,
-            entry.entry_id,
-        ):
-            if registry_entry.unique_id.endswith("_schedule"):
-                entity_registry.async_remove(registry_entry.entity_id)
-                removed += 1
-
         hass.config_entries.async_update_entry(entry, version=5)
-        _LOGGER.info("Removed %s obsolete raw schedule entities", removed)
-
     return True
-
-
-def _is_redundant_configuration_entity(unique_id: str) -> bool:
-    """Return whether a legacy unique ID belongs to a removed configuration mirror."""
-    return any(
-        unique_id.endswith(f"_{suffix}")
-        for suffix in _REDUNDANT_ENTITY_SUFFIXES
-    )
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Zentraly from a config entry."""
-    session = aiohttp_client.async_get_clientsession(hass)
     # Existing entries keep the same identity across reloads and HA restarts.
     device_guid = entry.data.get(CONF_DEVICE_GUID) or str(
         uuid.uuid5(uuid.NAMESPACE_URL, f"{DOMAIN}:{entry.entry_id}")
@@ -193,6 +125,81 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             entry, data={**entry.data, CONF_DEVICE_GUID: device_guid}
         )
 
+    discovered_service_names: set[str] = set()
+    discovery_lock = asyncio.Lock()
+    last_discovery_time = 0.0
+
+    async def async_browse_local_devices() -> None:
+        """Browse the service type before resolving a concrete device name."""
+        nonlocal last_discovery_time
+        async with discovery_lock:
+            current_time = asyncio.get_running_loop().time()
+            if discovered_service_names or current_time - last_discovery_time < 60:
+                return
+            last_discovery_time = current_time
+
+            zc = await zeroconf.async_get_instance(hass)
+
+            def on_service_state_change(
+                zeroconf,
+                service_type: str,
+                name: str,
+                state_change,
+            ) -> None:
+                del zeroconf, service_type, state_change
+                discovered_service_names.add(name)
+
+            browser = AsyncServiceBrowser(
+                zc,
+                ZEROCONF_SERVICE_TYPE,
+                handlers=[on_service_state_change],
+            )
+            try:
+                await asyncio.sleep(ZEROCONF_TIMEOUT_MS / 1000)
+            finally:
+                await browser.async_cancel()
+
+            _LOGGER.debug(
+                "Zentraly mDNS browse found %s service(s)",
+                len(discovered_service_names),
+            )
+
+    async def async_resolve_local_device(
+        device_serial: str,
+    ) -> tuple[str, int] | None:
+        """Resolve a Zentraly hub using the service advertised by the app."""
+        zc = await zeroconf.async_get_instance(hass)
+        expected_service_name = f"{device_serial}.{ZEROCONF_SERVICE_TYPE}"
+        service_name = next(
+            (
+                name
+                for name in discovered_service_names
+                if name.casefold() == expected_service_name.casefold()
+            ),
+            expected_service_name,
+        )
+        service_info = AsyncServiceInfo(ZEROCONF_SERVICE_TYPE, service_name)
+        if not await service_info.async_request(zc, ZEROCONF_TIMEOUT_MS):
+            await async_browse_local_devices()
+            service_name = next(
+                (
+                    name
+                    for name in discovered_service_names
+                    if name.casefold() == expected_service_name.casefold()
+                ),
+                expected_service_name,
+            )
+            service_info = AsyncServiceInfo(ZEROCONF_SERVICE_TYPE, service_name)
+            if not await service_info.async_request(zc, ZEROCONF_TIMEOUT_MS):
+                return None
+        addresses = service_info.parsed_scoped_addresses()
+        if not addresses:
+            return None
+        return addresses[0], service_info.port or 80
+
+    session = aiohttp_client.async_get_clientsession(hass)
+    local_client = ZentralyLocalClient(session, async_resolve_local_device)
+
     api = ZentralyApi(
         email=saved.get(CONF_EMAIL),
         password=saved.get(CONF_PASSWORD),
@@ -201,10 +208,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         device_guid=device_guid,
         user_id=saved.get(CONF_USER_ID),
         firebase_token=saved.get(CONF_FIREBASE_TOKEN),
+        local_client=local_client,
     )
 
     hass.data.setdefault(DOMAIN, {})
-    _async_register_services(hass)
 
     try:
         if not has_token:
@@ -248,7 +255,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "drafts": hass.data.get(DATA_REAUTH_DRAFTS, {}).get(entry.entry_id) or AdvancedDraftStore(),
     }
 
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    _async_register_services(hass)
+    try:
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    except BaseException:
+        # Failed or cancelled setup must not leave a stale loaded entry. The
+        # reauth draft handoff remains available for the next setup attempt.
+        hass.data[DOMAIN].pop(entry.entry_id, None)
+        _async_remove_services_if_unused(hass)
+        raise
 
     # Consume only after the entire setup succeeds; failures retain the handoff.
     pending = hass.data.get(DATA_REAUTH_DRAFTS, {})
@@ -262,15 +277,12 @@ async def _async_enrich_device_state(
     api: ZentralyApi,
     devices: list[dict],
 ) -> None:
-    """Read validated ZTTWF state and optional existing type-16/17 attributes."""
+    """Enrich the inventory with optional existing type-16/17 attributes."""
     for device in devices:
         device_type = device.get("device_type")
         command_target = command_device_id(device)
         try:
-            if device_type == DEVICE_TYPE_THERMOSTAT:
-                state = await read_zttwf_state(api, device)
-                state.update(connected=True, data_source="cloud_get_config")
-            elif device_type == DEVICE_TYPE_ZTTIN01_THERMOSTAT:
+            if device_type == DEVICE_TYPE_ZTTIN01_THERMOSTAT:
                 state = await api.read_zttin01_raw_attrs(
                     command_target,
                     device.get("mac"),
@@ -287,16 +299,12 @@ async def _async_enrich_device_state(
         except ZentralyAuthError:
             raise
         except ZentralyApiError:
-            if device_type == DEVICE_TYPE_THERMOSTAT:
-                device.update(connected=False, data_source="unavailable")
             _LOGGER.warning(
                 "Failed to read cloud state for Zentraly device %s",
                 _safe_device_reference(device.get("serial")),
             )
             continue
         except Exception as err:  # noqa: BLE001
-            if device_type == DEVICE_TYPE_THERMOSTAT:
-                device.update(connected=False, data_source="unavailable")
             _LOGGER.warning(
                 "Unexpected error reading cloud state for Zentraly device %s (%s)",
                 _safe_device_reference(device.get("serial")),
@@ -490,13 +498,18 @@ def _device_from_service_call(
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
-        hass.data[DOMAIN].pop(entry.entry_id)
-        if not hass.data[DOMAIN]:
-            hass.services.async_remove(DOMAIN, SERVICE_REFRESH_DEVICE)
-            hass.services.async_remove(DOMAIN, SERVICE_APPLY_THERMOSTAT_ADVANCED_SETTINGS)
-            hass.services.async_remove(DOMAIN, SERVICE_APPLY_BOILER_SETTINGS)
+        hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+        _async_remove_services_if_unused(hass)
 
     return unload_ok
+
+
+def _async_remove_services_if_unused(hass: HomeAssistant) -> None:
+    """Remove shared services after the last entry unloads or fails setup."""
+    if not hass.data.get(DOMAIN):
+        hass.services.async_remove(DOMAIN, SERVICE_REFRESH_DEVICE)
+        hass.services.async_remove(DOMAIN, SERVICE_APPLY_THERMOSTAT_ADVANCED_SETTINGS)
+        hass.services.async_remove(DOMAIN, SERVICE_APPLY_BOILER_SETTINGS)
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:

@@ -6,21 +6,44 @@
 
 Home Assistant custom integration for **Zentraly WiFi Thermostats** (by PEISA/FV Group - Argentina).
 
-## Candidate: selective upstream 1.0.5 — phases A and B
+## Candidate 1.1.0 — merged to fork main 2026-09-26
 
-The local integration stays at **1.1.0**. Phase A adds persistent sessions and
-same-account reauthentication while preserving advanced type-16/17 controls.
-Authentication failures in actions start reauth directly. Pending drafts survive
-reauth and setup retries in memory; restarting HA still discards them.
+This branch is rebased onto upstream `7f1002c` (1.0.5). It retains upstream
+session handling, LAN discovery, local transport and type-2 target restoration,
+and adds the ZTTIN01/type-16 and boiler/type-17 capabilities of this fork.
+Config entry version remains 5; existing entries, options and entity identifiers
+are preserved. Offline validation and Home Assistant acceptance passed; this
+candidate is merged into the fork's `main`. No release tag has been created.
+See [validation and recovery](docs/upstream-rebase-local.md).
 
-This candidate passes offline checks; actual Home Assistant/cloud/device acceptance
-is pending. In particular, the identity fields returned by `/App` must be verified
-before accepting reauth live. See [phase A details and rollback](docs/upstream-105-phase-a.md).
+Saved sessions are reused. Initial setup still accepts email/password and saves
+the complete session returned by the provider. An invalid saved session requests
+reauthentication through the masked official-app session JSON field; it never
+silently falls back to password login. Password-only login remains subject to
+provider acceptance.
 
-Phase B adds validated cloud getConfig state for type-2/ZTTWF, relay-based activity
-and write confirmation. Targets are rounded to centidegrees and confirmed within
-±0.01 °C. No write is retried. Accept A before promoting B; see
-[phase B details and rollback](docs/upstream-105-phase-b.md).
+Reads can fall back from LAN to cloud. A write selects one transport and is never
+automatically replayed through another transport. Changes are published from
+device readback, with at most one repeated confirmation read. ZTTIN01 polling
+uses semantic values from `readAttr`, so a stale `/App` snapshot cannot replace
+a newer Away readback. Advanced drafts survive reauthentication and setup
+retries in memory; restarting Home Assistant discards them. A later ordinary
+integration reload also discards drafts.
+
+## Upstream upgrade notes for 1.0.5
+
+Install **v1.0.5** through HACS and restart Home Assistant. Keep the existing
+Zentraly integration entry: it contains the saved session used for reconnection.
+The session and live-state repair previously installed manually is now included
+in the release, so installing this version does not overwrite it with 1.0.4 code.
+Home Assistant **2026.9.0 or later** is required.
+
+**Authentication limitation:** a new password-only login may still be rejected
+by Zentraly (`CK_UserFBTokens_strUserFBToken_NoHaIn`). The verified recovery path
+uses a valid session already stored in Home Assistant. If that session expires
+or is revoked, Home Assistant requests reauthentication. This release does not
+provide a supported automatic way to obtain a new official-app session. Do not
+delete an existing entry to troubleshoot a login failure.
 
 ## Features
 
@@ -30,16 +53,18 @@ and write confirmation. Targets are rounded to centidegrees and confirmed within
 - Turn heating on/off
 - Automatic device discovery
 - Works with Google Home and Alexa through Home Assistant
-- ZTTIN01 automatic schedule mode, away preset and child lock
-- Read-only schedule telemetry, including the current scheduled temperature and next change
-- Thermostat and boiler sensors, advanced settings and manual refresh
-- English and Spanish translations for the additional entities and services
 
 ## Supported Devices
 
-- Zentraly WiFi Thermostat (ZTTWF series)
-- Zentraly ZTTIN01 thermostat (`device_type=16`)
-- Zentraly ZTBIN01 boiler extension (`device_type=17`, `BOILER_WIFI_ESP_NOW`), associated with a ZTTIN01 thermostat
+- Zentraly WiFi Thermostat (type 2/ZTTWF): `getConfig`/`setConfig`, HEAT/OFF.
+- ZTTIN01 (type 16): `readAttr`/`writeAttr`, HEAT/AUTO/OFF, away preset, lock,
+  advanced settings and a read-only decoded schedule.
+- Boiler extension (type 17): telemetry and documented advanced settings.
+  Schedule editing and writing `ivnumDeviceOffDelay` are not supported.
+
+The integration provides `climate`, `sensor`, `binary_sensor`, `number`, `select`,
+`lock` and `button`. Advanced number/select entities edit an in-memory draft;
+the corresponding apply button or service sends the changes and confirms them.
 
 ## Installation
 
@@ -77,36 +102,44 @@ For each thermostat, the integration creates a `climate` entity with:
 | `current_temperature` | Current room temperature |
 | `target_temperature` | Target temperature setpoint |
 | `current_humidity` | Current humidity level |
-| `hvac_mode` | Current mode (heat/off; also auto for ZTTIN01) |
+| `hvac_mode` | Current mode (heat/off) |
 | `hvac_action` | Current action (heating/idle/off) |
-
-ZTTIN01 thermostats and boiler extensions also expose sensors and binary sensors for telemetry, numbers and selects for advanced settings, and Apply configuration/Refresh buttons. ZTTIN01 thermostats additionally expose a child lock and read-only schedule sensors.
-
-Advanced settings are staged locally until **Apply configuration** is pressed. Display settings are sent together, matching the mobile app. Applied values are confirmed by device readback; unconfirmed changes remain pending and writes are never retried automatically. **Refresh** discards pending drafts before fetching cloud data.
 
 ## Services
 
 The standard Home Assistant climate services are supported:
 
 - `climate.set_temperature` - Set target temperature
-- `climate.set_hvac_mode` - Set HVAC mode (heat/off; also auto for ZTTIN01)
+- `climate.set_hvac_mode` - Set HVAC mode (heat/off)
 - `climate.turn_on` - Turn on heating
 - `climate.turn_off` - Turn off heating
-- `climate.set_preset_mode` - Select the ZTTIN01 none/away preset
 
-Additional Zentraly services:
+The integration also provides:
 
-- `zentraly.refresh_device` - Refresh cloud data and discard pending drafts; omit `device_id` to refresh all loaded Zentraly devices.
-- `zentraly.apply_thermostat_advanced_settings` - Apply ZTTIN01 temperature correction, away temperature and display settings, with readback confirmation.
-- `zentraly.apply_boiler_settings` - Apply boiler water temperatures, operating options and on-delay, grouped by cluster and confirmed by readback.
+- `zentraly.refresh_device`: optional `device_id`; discards pending drafts for
+  the selected devices and refreshes their state.
+- `zentraly.apply_thermostat_advanced_settings`: `device_id`, plus optional
+  `temperature_offset`, `away_temperature`, `display_always_on`,
+  `display_brightness` and `display_type`.
+- `zentraly.apply_boiler_settings`: `device_id`, plus optional
+  `boiler_h2o_temperature`, `is_h2o_enabled`, `boiler_heating_temperature`,
+  `is_comfort_mode`, `on_delay`, `is_forced_on` and `weather_type`.
 
-Pass the Home Assistant device registry ID as `data.device_id`. The two configuration services apply supplied values immediately, without a subsequent Apply button press. Their optional fields are described in the Home Assistant action editor.
+Apply services preserve unconfirmed draft values. Controls retain the child's
+Home Assistant identity while commands use its parent when present.
 
 ## Troubleshooting
 
 ### Authentication Issues
 
-Make sure you're using the same credentials as your Zentraly mobile app. The integration uses the Zentraly cloud API.
+A saved session is reused automatically. If Home Assistant requests
+reauthentication, its masked session field accepts a JSON object with `token`,
+`user_id` (a positive integer), `firebase_token`, and `device_guid` for the same
+Zentraly account. The account is validated before the existing entry is updated.
+Treat this object as a password: never post it in issues or logs.
+
+Password-only login can still be rejected by the private service. A working
+official app session does not prove that a new login will succeed.
 
 ### Devices Not Showing
 
@@ -126,11 +159,19 @@ logger:
 
 ## Technical Details
 
-This integration was created by reverse-engineering the Zentraly mobile app API. It uses the official Zentraly cloud API hosted on Azure.
+This integration uses a private, reverse-engineered Zentraly API hosted on Azure.
+It is not a supported public API and may change without notice.
 
 **API Endpoint**: `https://ztprdrestservicesv2.azurewebsites.net`
 
-The thermostats communicate via Azure IoT Hub and the integration polls the cloud API for status updates.
+The integration polls live device configuration through Azure IoT Hub every
+60 seconds. It attempts local WebSocket transport only when the account declares
+it enabled and the device can be discovered. Otherwise it uses the cloud.
+The `data_source` attribute identifies the active transport. Local transport has
+not been validated on the ZTTWF01 devices used for the cloud recovery checks.
+
+See [CHANGELOG.md](CHANGELOG.md) and [RELEASING.md](RELEASING.md) for changes and
+the required publication checks.
 
 ## Contributing
 
@@ -148,4 +189,3 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 - Reverse engineering and integration development by [@rodrigouroz](https://github.com/rodrigouroz)
 - Built with assistance from Claude Code
-- ZTTIN01 thermostat and ZTBIN01 boiler extension support contributed by [@axcoro](https://github.com/axcoro).
