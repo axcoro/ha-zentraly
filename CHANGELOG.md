@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.1 — README and release information, 2026-09-27
+
+- Clarify the supported product models, compatibility requirements and HACS
+  release process in the README.
+- Simplify support, authentication and advanced-setting guidance, and remove
+  internal transport details from user-facing documentation.
+- No component behavior or device-control code changed in this release.
+
 ## 1.1.0 — fork main, 2026-09-26
 
 - Rebase the complete type-2/16/17 fork onto upstream 1.0.5, preserving LAN
