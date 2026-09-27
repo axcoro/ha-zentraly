@@ -1,6 +1,7 @@
 # Zentraly ZTTIN01 for Home Assistant
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
+[![GitHub Release](https://img.shields.io/github/v/release/axcoro/ha-zentraly?include_prereleases)](https://github.com/axcoro/ha-zentraly/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 An unofficial, independently maintained Home Assistant fork focused on the
@@ -23,9 +24,11 @@ This fork is based on upstream commit `7f1002c` (v1.0.5), with its session
 handling and discovery plus this fork's ZTTIN01/type-16 and boiler-extension/
 type-17 support. Config entry version remains 5, and existing entries and
 entity identifiers are preserved. The 1.1.0 candidate passed offline checks
-and live acceptance on the maintainer's installation. No release tag has been
-published; HACS installs the repository's default branch. Home Assistant
-**2026.9.0 or later** is required.
+and live acceptance on the maintainer's installation. After tests pass on a
+push to `main`, GitHub Actions creates a prerelease for a manifest version that
+has not been released before. Enable prereleases in HACS to install that
+candidate; the maintainer promotes the same release to stable after live
+acceptance. Home Assistant **2026.9.0 or later** is required.
 
 See [validation and recovery](docs/upstream-rebase-local.md) for the candidate's
 validation evidence.
@@ -34,7 +37,7 @@ validation evidence.
 
 | Device | Implemented support | Verification and limits |
 |---|---|---|
-| ZTTWF family (type 2) | `getConfig`/`setConfig`, HEAT/OFF | Support retained; no type-2 device was available for live verification on the maintainer's installation. |
+| Zentraly thermostat (type 2) | Support retained | No type-2 device was available for live testing. |
 | ZTTIN01 (type 16) | `readAttr`/`writeAttr`, HEAT/AUTO/OFF, away preset, lock, advanced settings, decoded schedule readout | Offline checks and live readback verification on 2026-09-26. Schedule editing is not supported. |
 | Boiler extension (type 17) | Telemetry and documented advanced settings | Offline checks and live readback verification of the heating-water setting on 2026-09-26. Schedule editing and writes to `ivnumDeviceOffDelay` are not supported. |
 
@@ -82,9 +85,12 @@ Home Assistant or reloading the integration discards them.
 8. Search for "Zentraly ZTTIN01" and install it
 9. Restart Home Assistant
 
+To install a prerelease, enable prereleases for this repository in HACS. See
+[HACS switch entities](https://hacs.dev/docs/use/entities/switch/).
+
 ### Manual Installation
 
-1. Download the [repository source archive](https://github.com/axcoro/ha-zentraly/archive/refs/heads/main.zip)
+1. Choose a version from [GitHub Releases](https://github.com/axcoro/ha-zentraly/releases) and download its source archive
 2. Copy `custom_components/zentraly` to your Home Assistant `custom_components` directory
 3. Restart Home Assistant
 
@@ -177,8 +183,8 @@ the required publication checks.
 
 ## Contributing
 
-Contributions are welcome. Please open an issue or pull request in
-[this repository](https://github.com/axcoro/ha-zentraly).
+Contributions are welcome through pull requests targeting `main`. See
+[RELEASING.md](RELEASING.md) for versioning, validation and release steps.
 
 ## Disclaimer
 
@@ -191,4 +197,3 @@ MIT License - see [LICENSE](LICENSE) file for details.
 ## Credits
 
 - Original integration and reverse engineering by [@rodrigouroz](https://github.com/rodrigouroz); this fork is based on [their project](https://github.com/rodrigouroz/ha-zentraly).
-- Built with assistance from Claude Code

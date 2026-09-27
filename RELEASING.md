@@ -1,32 +1,61 @@
-# Publishing a Zentraly release
+# Versioning and releases
 
-The installed code, GitHub tag and HACS download must be the same release.
-Do not publish an unverified authentication change as the latest stable version.
+All changes go through pull requests targeting `main`. GitHub Actions runs the
+offline checks on each pull request and creates a prerelease after a successful
+merge when the manifest version has not been released before.
 
-1. Start from current `main`, preserve installation identity and stored sessions,
-   and increment `custom_components/zentraly/manifest.json`.
-2. Run `python -m pip install -r requirements-test.txt`, then
-   `python -m unittest discover -s tests -v` and
-   `python -m compileall -q custom_components tests`. Review the diff for secrets.
-3. Merge after GitHub Actions passes. Tag that exact commit and initially publish
-   it as a prerelease, without marking it Latest.
-4. Back up the installed component. Select the exact prerelease in HACS, then
-   compare SHA-256 hashes of every installed component file with the tagged files.
-   Confirm the installed manifest version and HACS installed version agree.
-5. Run `ha core check`, restart Home Assistant, and verify the existing entry and
-   entities recover without replacing their saved session.
-6. Compare entity values with direct `getConfig` device reads. For each thermostat,
-   change the target by 0.5 degrees through Home Assistant and read it back from the
-   device. Restore the original target only if it still matches the test value;
-   preserve any concurrent user change. Verify both entity and device readbacks.
-7. Wait at least one 60-second polling interval and confirm both entities remain
-   available and their internal `last_reported` advances. Check filtered logs.
-8. Promote the same tag to stable/Latest only after those checks pass. Document
-   the tested Home Assistant version and any remaining authentication limitations.
+## Before merging
 
-Unit tests use synthetic responses and Home Assistant stubs. They do not prove
-that the vendor accepts a login or that a physical device applied a command.
-LAN transport requires an enabled, reachable device service; cloud validation is
-not LAN validation. A rejected or expired session still needs reauthentication.
+1. Create a topic branch from current `main` and open a pull request targeting
+   `main`. Keep the pull request focused and summarize the user-visible change.
+2. For a release-worthy component change, increment
+   `custom_components/zentraly/manifest.json` if the current version already
+   has a release, and add the change to `CHANGELOG.md`. Pull requests may share
+   a version until the first merge publishes its prerelease. After that release
+   exists, bump the version for the next release-worthy component change.
+   Documentation-only and CI-only changes do not need a version bump.
+3. Run the same offline checks used by GitHub Actions:
 
-Never ship local credentials, session exports, backups or live logs in a release.
+   ```powershell
+   python -m pip install -r requirements-test.txt
+   python -m pytest -q tests
+   python -m ruff check custom_components/zentraly tests tests_upstream
+   python -m compileall -q custom_components tests tests_upstream
+   ```
+
+4. Review the diff for credentials and private device data. Merge only after
+   the required pull request checks pass.
+
+## After merging
+
+The `release` job in `.github/workflows/test.yml` runs only after the `tests`
+job passes on a push to `main`. It reads the version from `manifest.json` and
+creates a GitHub prerelease named `vX.Y.Z` at the exact merged commit. It skips
+a version that already has a GitHub release, so later documentation or CI
+merges do not create duplicate releases. A tag that points to a different
+commit causes the job to fail. HACS uses the GitHub release source for that
+version; no custom ZIP asset is needed.
+
+To install a prerelease in HACS, enable prereleases for this repository and
+select the exact candidate. Before testing, back up the installed component and
+compare its files and manifest version with the release. Do not treat passing
+CI as live device acceptance.
+
+For a component change that affects device behavior or controls, verify the
+affected device family before promoting the candidate to stable. Use the
+family's documented read path and confirm writes from device readback: type 2
+uses its documented `getConfig` contract; ZTTIN01 type 16 and boiler extension
+type 17 use the documented `readAttr` contract. Keep live evidence separate
+from offline tests. If a device family is unavailable for testing, record that
+limitation rather than claiming live acceptance.
+
+After the applicable acceptance checks pass, promote the same tag to stable;
+do not move or recreate it:
+
+```powershell
+gh release edit vX.Y.Z --prerelease=false --latest
+```
+
+Record the Home Assistant version, tested device family, result and remaining
+limitations in the test matrix. Never publish credentials, session exports,
+backups or live logs with a release.
