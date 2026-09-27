@@ -258,6 +258,73 @@ class ThermostatAdvancedConfirmationTests(unittest.IsolatedAsyncioTestCase):
 
 
 class BoilerWriteResponseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_first_cluster_error_does_not_write_or_clear_later_cluster(self) -> None:
+        heating_key = advanced.BOILER_HEATING_TEMPERATURE
+        delay_key = advanced.BOILER_ON_DELAY
+        device = {"serial": "CHILD", "parent_serial": "PARENT", "device_type": 17}
+        coordinator = FakeCoordinator(device)
+        store = advanced.AdvancedDraftStore()
+        store.set("CHILD", heating_key, 75.0)
+        store.set("CHILD", delay_key, 2.0)
+
+        class FirstClusterAppliedThenRejectedApi(FakeApi):
+            async def send_write_attr_command(self, *args, **kwargs) -> dict:
+                self.writes.append((args, kwargs))
+                self.state[heating_key] = 75.0
+                raise api_module.ZentralyApiError("device status 404")
+
+        api = FirstClusterAppliedThenRejectedApi(
+            state={heating_key: 70.0, delay_key: 1.0}
+        )
+
+        with self.assertRaisesRegex(api_module.ZentralyApiError, "404"):
+            await advanced.async_apply_boiler_advanced(
+                api,
+                coordinator,
+                store,
+                device,
+                {heating_key: 75.0, delay_key: 2.0},
+                {heating_key, delay_key},
+            )
+
+        self.assertEqual([65535], [call[0][2] for call in api.writes])
+        self.assertEqual(1, len(api.reads))
+        self.assertEqual({65535}, set(api.reads[0][3]))
+        self.assertEqual({delay_key}, store.dirty_keys("CHILD"))
+
+    async def test_second_cluster_error_confirms_both_without_rewriting(self) -> None:
+        heating_key = advanced.BOILER_HEATING_TEMPERATURE
+        delay_key = advanced.BOILER_ON_DELAY
+        device = {"serial": "CHILD", "parent_serial": "PARENT", "device_type": 17}
+        coordinator = FakeCoordinator(device)
+        store = advanced.AdvancedDraftStore()
+        values = {heating_key: 75.0, delay_key: 2.0}
+        for key, value in values.items():
+            store.set("CHILD", key, value)
+
+        class SecondClusterAppliedThenRejectedApi(FakeApi):
+            async def send_write_attr_command(self, *args, **kwargs) -> dict:
+                self.writes.append((args, kwargs))
+                if args[2] == 65535:
+                    self.state[heating_key] = 75.0
+                    return {"status": 200}
+                self.state[delay_key] = 2.0
+                raise api_module.ZentralyApiError("device status 404")
+
+        api = SecondClusterAppliedThenRejectedApi(
+            state={heating_key: 70.0, delay_key: 1.0}
+        )
+
+        result = await advanced.async_apply_boiler_advanced(
+            api, coordinator, store, device, values, set(values)
+        )
+
+        self.assertEqual([65535, 65006], [call[0][2] for call in api.writes])
+        self.assertEqual(1, len(api.reads))
+        self.assertEqual({65535, 65006}, set(api.reads[0][3]))
+        self.assertEqual(set(values), result.confirmed_keys)
+        self.assertEqual(set(), store.dirty_keys("CHILD"))
+
     async def test_device_status_error_is_resolved_by_readback_without_rewriting(self) -> None:
         key = advanced.BOILER_HEATING_TEMPERATURE
         device = {
