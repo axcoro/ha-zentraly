@@ -105,12 +105,14 @@ retried.
 ### Authentication Issues
 
 Home Assistant reuses a saved session. Password-only sign-in may be rejected for
-some accounts. If reauthentication is required, the masked session field accepts
-a JSON object with `token`, `user_id` (a positive integer), `firebase_token` and
-`device_guid` for the same Zentraly account. The account is validated before the
-existing entry is updated. The integration cannot obtain a new session from the
-official app automatically. Treat this object as a password; never post it in
-issues or logs, and do not delete an existing entry to troubleshoot sign-in.
+some accounts. If an expired session does not trigger a reauthentication prompt,
+open the Zentraly integration entry menu and choose **Reconfigure**. The masked
+session field accepts a JSON object with `token`, `user_id` (a positive integer),
+`firebase_token` and `device_guid` for the same Zentraly account. The account is
+validated before the existing entry is updated. The integration cannot obtain a
+new session from the official app automatically. Treat this object as a password;
+never post it in issues or logs, and do not delete an existing entry to
+troubleshoot sign-in.
 
 ### Devices Not Showing
 
