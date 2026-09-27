@@ -118,7 +118,7 @@ class ZentralyBinarySensor(CoordinatorEntity, BinarySensorEntity):
             "model": (
                 "ZTTIN01 Thermostat"
                 if device_type == DEVICE_TYPE_ZTTIN01_THERMOSTAT
-                else "Boiler Sensor"
+                else "Boiler Extension"
                 if device_type in BOILER_DEVICE_TYPES
                 else "WiFi Thermostat"
             ),
