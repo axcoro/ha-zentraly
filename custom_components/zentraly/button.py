@@ -105,7 +105,7 @@ class ZentralyAdvancedButton(CoordinatorEntity, ButtonEntity):
             "model": (
                 "ZTTIN01 Thermostat"
                 if self._device_type == DEVICE_TYPE_ZTTIN01_THERMOSTAT
-                else "Boiler Sensor"
+                else "Boiler Extension"
             ),
             "sw_version": device.get("firmware"),
         }

@@ -30,3 +30,55 @@ jobs:
           version = json.loads(Path('custom_components/zentraly/manifest.json').read_text())['version']
           assert os.environ['GITHUB_REF_NAME'] == f'v{version}', 'Tag and manifest version differ'
           PY
+
+  release:
+    name: Publish prerelease
+    needs: tests
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: release-main
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Read integration version
+        id: version
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          version = json.loads(Path('custom_components/zentraly/manifest.json').read_text())['version']
+          if not re.fullmatch(r'\d+\.\d+\.\d+', version):
+              raise SystemExit(f'Invalid integration version: {version!r}')
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              output.write(f'tag=v{version}\n')
+          PY
+      - name: Create prerelease if this version is new
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          releases="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1000 --json tagName --jq '.[].tagName')"
+          if grep -Fxq "$RELEASE_TAG" <<< "$releases"; then
+            echo "$RELEASE_TAG already has a release; skipping."
+            exit 0
+          fi
+
+          tag_refs="$(git ls-remote origin "refs/tags/$RELEASE_TAG" "refs/tags/$RELEASE_TAG^{}")"
+          if [[ -n "$tag_refs" ]]; then
+            tag_sha="$(printf '%s\n' "$tag_refs" | tail -n 1 | cut -f 1)"
+            if [[ "$tag_sha" != "$GITHUB_SHA" ]]; then
+              echo "::error::Tag $RELEASE_TAG already points to a different commit."
+              exit 1
+            fi
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --prerelease --title "$RELEASE_TAG" --generate-notes
+          else
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title "$RELEASE_TAG" --generate-notes
+          fi

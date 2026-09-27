@@ -1,14 +1,14 @@
 {
   "domain": "zentraly",
-  "name": "Zentraly Thermostat",
+  "name": "Zentraly ZTTIN01",
   "codeowners": [
-    "@rodrigouroz"
+    "@axcoro"
   ],
   "config_flow": true,
   "dependencies": ["zeroconf"],
-  "documentation": "https://github.com/rodrigouroz/ha-zentraly",
+  "documentation": "https://github.com/axcoro/ha-zentraly",
   "iot_class": "cloud_polling",
-  "issue_tracker": "https://github.com/rodrigouroz/ha-zentraly/issues",
+  "issue_tracker": "https://github.com/axcoro/ha-zentraly/issues",
   "requirements": [
     "aiohttp>=3.8.0"
   ],

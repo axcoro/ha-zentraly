@@ -270,7 +270,7 @@ class ZentralyDraftSelect(CoordinatorEntity, SelectEntity):
             "model": (
                 "ZTTIN01 Thermostat"
                 if device_type == DEVICE_TYPE_ZTTIN01_THERMOSTAT
-                else "Boiler Sensor"
+                else "Boiler Extension"
             ),
             "sw_version": device.get("firmware"),
         }

@@ -61,12 +61,12 @@ apply_thermostat_advanced_settings:
             - temperatura
             - horario
 apply_boiler_settings:
-  name: Apply boiler settings
-  description: Apply one or more boiler settings in writeAttr batches grouped by cluster.
+  name: Apply boiler extension settings
+  description: Apply supported settings to the Zentraly boiler extension and confirm each change with a device readback.
   fields:
     device_id:
       name: Device
-      description: Zentraly boiler device to configure.
+      description: Zentraly boiler extension device to configure.
       required: true
       selector:
         device:

@@ -489,13 +489,39 @@ class PlatformSmokeTests(unittest.IsolatedAsyncioTestCase):
             "lock": 1,
             "button": 4,
         }
+        all_entities: list[object] = []
 
         for name, platform in PLATFORMS.items():
             entities: list[object] = []
             await platform.async_setup_entry(hass, entry, entities.extend)
+            all_entities.extend(entities)
             with self.subTest(platform=name):
                 self.assertEqual(expected[name], len(entities))
                 self.assertTrue(all(entity.coordinator is coordinator for entity in entities))
+
+        boiler_entities = [
+            entity
+            for entity in all_entities
+            if getattr(entity, "_device_serial", None) == "BOILER"
+        ]
+        self.assertTrue(boiler_entities)
+        self.assertEqual(
+            {"Boiler Extension"},
+            {entity._attr_device_info["model"] for entity in boiler_entities},
+        )
+        self.assertEqual(
+            {frozenset({("zentraly", "BOILER")})},
+            {
+                frozenset(entity._attr_device_info["identifiers"])
+                for entity in boiler_entities
+            },
+        )
+        self.assertTrue(
+            all(
+                entity._attr_unique_id.startswith("zentraly_BOILER_")
+                for entity in boiler_entities
+            )
+        )
 
     async def test_poll_failure_marks_every_platform_entity_unavailable(self) -> None:
         entry = ConfigEntry()

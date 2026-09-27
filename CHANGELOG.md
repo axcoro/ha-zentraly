@@ -16,6 +16,8 @@
 - Retain the 33 original upstream regression cases in an isolated test process,
   alongside fork and integration regressions. Live acceptance is tracked
   separately in `docs/upstream-rebase-local.md`.
+- Present the project as an independently maintained fork and identify type-17
+  devices as boiler extensions in Home Assistant.
 
 ## 1.0.5
 

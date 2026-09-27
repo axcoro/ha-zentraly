@@ -1,49 +1,66 @@
-# Zentraly Thermostat Integration for Home Assistant
+# Zentraly ZTTIN01 for Home Assistant
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
-[![GitHub Release](https://img.shields.io/github/release/rodrigouroz/ha-zentraly.svg)](https://github.com/rodrigouroz/ha-zentraly/releases)
+[![GitHub Release](https://img.shields.io/github/v/release/axcoro/ha-zentraly?include_prereleases)](https://github.com/axcoro/ha-zentraly/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Home Assistant custom integration for **Zentraly WiFi Thermostats** (by PEISA/FV Group - Argentina).
+An unofficial, independently maintained Home Assistant fork focused on the
+Zentraly **ZTTIN01 thermostat** and its **boiler extension**. It also retains
+support for the ZTTWF type-2 thermostat family.
 
-## Candidate 1.1.0 — merged to fork main 2026-09-26
+The manufacturer's product page lists the commercial models [ZTTIN01-ZN
+thermostat](https://www.zentraly.com/termostato-inalambrico-wifi) and
+ZTBIN01-ZN extension, and links the [quick installation guide](https://www.zentraly.com/guiaRapida/termostato_inalambrico_wifi.pdf).
+The integration's internal device types come from reverse engineering; the
+manufacturer's page does not document those type numbers.
 
-This branch is rebased onto upstream `7f1002c` (1.0.5). It retains upstream
-session handling, LAN discovery, local transport and type-2 target restoration,
-and adds the ZTTIN01/type-16 and boiler/type-17 capabilities of this fork.
-Config entry version remains 5; existing entries, options and entity identifiers
-are preserved. Offline validation and Home Assistant acceptance passed; this
-candidate is merged into the fork's `main`. No release tag has been created.
-See [validation and recovery](docs/upstream-rebase-local.md).
+This fork uses the same Home Assistant domain (`zentraly`) as the original
+integration. Install it as an alternative to the original; do not install both
+at the same time.
+
+## Fork status — 1.1.0
+
+This fork is based on upstream commit `7f1002c` (v1.0.5), with its session
+handling and discovery plus this fork's ZTTIN01/type-16 and boiler-extension/
+type-17 support. Config entry version remains 5, and existing entries and
+entity identifiers are preserved. The 1.1.0 candidate passed offline checks
+and live acceptance on the maintainer's installation. After tests pass on a
+push to `main`, GitHub Actions creates a prerelease for a manifest version that
+has not been released before. Enable prereleases in HACS to install that
+candidate; the maintainer promotes the same release to stable after live
+acceptance. Home Assistant **2026.9.0 or later** is required.
+
+See [validation and recovery](docs/upstream-rebase-local.md) for the candidate's
+validation evidence.
+
+## Supported devices
+
+| Device | Implemented support | Verification and limits |
+|---|---|---|
+| Zentraly thermostat (type 2) | Support retained | No type-2 device was available for live testing. |
+| ZTTIN01 (type 16) | `readAttr`/`writeAttr`, HEAT/AUTO/OFF, away preset, lock, advanced settings, decoded schedule readout | Offline checks and live readback verification on 2026-09-26. Schedule editing is not supported. |
+| Boiler extension (type 17) | Telemetry and documented advanced settings | Offline checks and live readback verification of the heating-water setting on 2026-09-26. Schedule editing and writes to `ivnumDeviceOffDelay` are not supported. |
+
+The integration provides `climate`, `sensor`, `binary_sensor`, `number`,
+`select`, `lock` and `button`. Advanced number/select entities edit an
+in-memory draft; the corresponding apply button or service sends the changes
+and confirms them from device readback.
+
+## Authentication and state
 
 Saved sessions are reused. Initial setup still accepts email/password and saves
-the complete session returned by the provider. An invalid saved session requests
-reauthentication through the masked official-app session JSON field; it never
-silently falls back to password login. Password-only login remains subject to
-provider acceptance.
-
-Reads can fall back from LAN to cloud. A write selects one transport and is never
-automatically replayed through another transport. Changes are published from
-device readback, with at most one repeated confirmation read. ZTTIN01 polling
-uses semantic values from `readAttr`, so a stale `/App` snapshot cannot replace
-a newer Away readback. Advanced drafts survive reauthentication and setup
-retries in memory; restarting Home Assistant discards them. A later ordinary
-integration reload also discards drafts.
-
-## Upstream upgrade notes for 1.0.5
-
-Install **v1.0.5** through HACS and restart Home Assistant. Keep the existing
-Zentraly integration entry: it contains the saved session used for reconnection.
-The session and live-state repair previously installed manually is now included
-in the release, so installing this version does not overwrite it with 1.0.4 code.
-Home Assistant **2026.9.0 or later** is required.
-
-**Authentication limitation:** a new password-only login may still be rejected
-by Zentraly (`CK_UserFBTokens_strUserFBToken_NoHaIn`). The verified recovery path
-uses a valid session already stored in Home Assistant. If that session expires
-or is revoked, Home Assistant requests reauthentication. This release does not
-provide a supported automatic way to obtain a new official-app session. Do not
+the complete session returned by the provider. A new password-only login may
+still be rejected by Zentraly (`CK_UserFBTokens_strUserFBToken_NoHaIn`). If a
+saved session expires or is revoked, Home Assistant requests reauthentication
+through the masked official-app session JSON field. The integration does not
+provide a supported automatic way to obtain a new official-app session; do not
 delete an existing entry to troubleshoot a login failure.
+
+Reads can fall back from LAN to cloud. A write selects one transport and is
+never automatically replayed through another transport. State changes are
+published from device readback, with at most one repeated confirmation read.
+Advanced drafts survive reauthentication and setup retries in memory; restarting
+Home Assistant or reloading the integration discards them.
 
 ## Features
 
@@ -54,18 +71,6 @@ delete an existing entry to troubleshoot a login failure.
 - Automatic device discovery
 - Works with Google Home and Alexa through Home Assistant
 
-## Supported Devices
-
-- Zentraly WiFi Thermostat (type 2/ZTTWF): `getConfig`/`setConfig`, HEAT/OFF.
-- ZTTIN01 (type 16): `readAttr`/`writeAttr`, HEAT/AUTO/OFF, away preset, lock,
-  advanced settings and a read-only decoded schedule.
-- Boiler extension (type 17): telemetry and documented advanced settings.
-  Schedule editing and writing `ivnumDeviceOffDelay` are not supported.
-
-The integration provides `climate`, `sensor`, `binary_sensor`, `number`, `select`,
-`lock` and `button`. Advanced number/select entities edit an in-memory draft;
-the corresponding apply button or service sends the changes and confirms them.
-
 ## Installation
 
 ### HACS (Recommended)
@@ -74,16 +79,19 @@ the corresponding apply button or service sends the changes and confirms them.
 2. Click on "Integrations"
 3. Click the three dots in the top right corner
 4. Select "Custom repositories"
-5. Add this repository URL: `https://github.com/rodrigouroz/ha-zentraly`
+5. Add this repository URL: `https://github.com/axcoro/ha-zentraly`
 6. Select category: "Integration"
 7. Click "Add"
-8. Search for "Zentraly" and install it
+8. Search for "Zentraly ZTTIN01" and install it
 9. Restart Home Assistant
+
+To install a prerelease, enable prereleases for this repository in HACS. See
+[HACS switch entities](https://hacs.dev/docs/use/entities/switch/).
 
 ### Manual Installation
 
-1. Download the latest release from [GitHub Releases](https://github.com/rodrigouroz/ha-zentraly/releases)
-2. Extract and copy the `custom_components/zentraly` folder to your Home Assistant's `custom_components` directory
+1. Choose a version from [GitHub Releases](https://github.com/axcoro/ha-zentraly/releases) and download its source archive
+2. Copy `custom_components/zentraly` to your Home Assistant `custom_components` directory
 3. Restart Home Assistant
 
 ## Configuration
@@ -175,7 +183,8 @@ the required publication checks.
 
 ## Contributing
 
-Contributions are welcome! Please open an issue or pull request on GitHub.
+Contributions are welcome through pull requests targeting `main`. See
+[RELEASING.md](RELEASING.md) for versioning, validation and release steps.
 
 ## Disclaimer
 
@@ -187,5 +196,4 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ## Credits
 
-- Reverse engineering and integration development by [@rodrigouroz](https://github.com/rodrigouroz)
-- Built with assistance from Claude Code
+- Original integration and reverse engineering by [@rodrigouroz](https://github.com/rodrigouroz); this fork is based on [their project](https://github.com/rodrigouroz/ha-zentraly).
