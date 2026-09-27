@@ -106,6 +106,20 @@ has no type-2 device, so physical type-2 acceptance is unavailable. The earlier
 boiler Apply discrepancy remains unconfirmed and outside this fix; the boiler
 was not modified during this deployment.
 
+## Manual session renewal acceptance
+
+On 2026-09-27, Home Assistant 2026.9.3 installed Zentraly v1.1.2 through HACS
+from release commit `1eef53b` and restarted Core. All 21 installed component
+files matched the release after normalizing line endings. The previously saved
+session produced `Failed setup, will retry`; manual Reconfigure could not validate
+an older session and left the entry unchanged, then accepted a fresh official-app
+session after verifying the same account. The entry loaded normally with a
+changed token and unchanged entry ID, unique ID, two device identities and 37
+entity identities. Of 34 registered states present in HA, 32 were available
+including climate; two remained unavailable. No device write was attempted.
+A private pre-change backup of the component and HA registries was retained
+outside Git. The session export used for renewal was removed after import.
+
 ## Recovery
 
 For a code rollback, deploy `70829c9` from committed source with the official
