@@ -127,14 +127,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     discovered_service_names: set[str] = set()
     discovery_lock = asyncio.Lock()
-    last_discovery_time = 0.0
+    last_discovery_time: float | None = None
 
     async def async_browse_local_devices() -> None:
         """Browse the service type before resolving a concrete device name."""
         nonlocal last_discovery_time
         async with discovery_lock:
             current_time = asyncio.get_running_loop().time()
-            if discovered_service_names or current_time - last_discovery_time < 60:
+            if discovered_service_names or (
+                last_discovery_time is not None
+                and current_time - last_discovery_time < 60
+            ):
                 return
             last_discovery_time = current_time
 

@@ -104,6 +104,7 @@ class UpstreamSetupTests(unittest.IsolatedAsyncioTestCase):
                 active.remove(self)
 
         service_info = types.SimpleNamespace(async_request=AsyncMock(return_value=False))
+        fake_loop = types.SimpleNamespace(time=lambda: 1.0)
         async def fail_inventory():
             client = self.api_options.get("local_client")
             self.assertIsNotNone(client, "setup must wire upstream LAN discovery")
@@ -113,7 +114,8 @@ class UpstreamSetupTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(integration.zeroconf, "async_get_instance", AsyncMock(), create=True), \
              patch.object(integration, "AsyncServiceInfo", return_value=service_info), \
              patch.object(integration, "AsyncServiceBrowser", Browser), \
-             patch.object(integration, "ZEROCONF_TIMEOUT_MS", 0):
+             patch.object(integration, "ZEROCONF_TIMEOUT_MS", 0), \
+             patch.object(integration.asyncio, "get_running_loop", return_value=fake_loop):
             for _ in range(2):
                 with self.assertRaises(integration.ConfigEntryNotReady):
                     await integration.async_setup_entry(self.hass, self.entry)
