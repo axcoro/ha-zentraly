@@ -2,6 +2,17 @@
 from homeassistant.const import Platform
 
 DOMAIN = "zentraly"
+CONF_AUTH_PROFILE = "auth_profile"
+# Public form/storage keys mapped to the app's mobile payload fields.
+AUTH_PROFILE_FIELDS = {
+    "app_version": "ivstrUserZtVersion",
+    "mobile_os": "ivnroUserMobileOS",
+    "mobile_trade": "ivstrUserMobileTrade",
+    "mobile_model": "ivstrUserMobileModel",
+    "mobile_os_version": "ivstrUserMobileOSVersion",
+    "language": "ivstrUserLanguage",
+    "country": "ivstrUserCountry",
+}
 DATA_REAUTH_DRAFTS = f"{DOMAIN}_reauth_drafts"
 SERVICE_REFRESH_DEVICE = "refresh_device"
 SERVICE_APPLY_THERMOSTAT_ADVANCED_SETTINGS = "apply_thermostat_advanced_settings"

@@ -58,6 +58,8 @@ class ReauthTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_empty_form_masks_session_without_default(self):
         result = await self.flow.async_step_reauth(self.entry.data)
+        self.assertEqual("menu", result["type"])
+        result = await self.flow.async_step_reauth_confirm()
         self.assertEqual({}, result["errors"])
         self.assertEqual("reauth_confirm", result["step_id"])
         schema = result["data_schema"].value
@@ -84,12 +86,12 @@ class ReauthTests(unittest.IsolatedAsyncioTestCase):
         form = await self.flow.async_step_reconfigure()
         self.assertEqual("reconfigure", form["step_id"])
         with patch.object(flow_module.aiohttp_client, "async_get_clientsession", return_value=FakeSession(FakeResponse(200, identity(43)))):
-            rejected = await self.flow.async_step_reconfigure({"session": json.dumps(SESSION)})
+            rejected = await self.flow.async_step_reauth_confirm({"session": json.dumps(SESSION)})
         self.assertEqual({"base": "wrong_account"}, rejected["errors"])
         self.assert_unchanged()
         session = FakeSession(FakeResponse(200, identity()))
         with patch.object(flow_module.aiohttp_client, "async_get_clientsession", return_value=session):
-            result = await self.flow.async_step_reconfigure({"session": json.dumps(SESSION)})
+            result = await self.flow.async_step_reauth_confirm({"session": json.dumps(SESSION)})
         self.assertEqual("reconfigure_successful", result["reason"])
         self.assertEqual(ENTRY | SESSION, self.entry.data)
         self.assertEqual("original-unique-id", self.entry.unique_id)

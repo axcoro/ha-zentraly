@@ -52,8 +52,14 @@ def _install_dependency_stubs() -> None:
             self.value = value
 
     voluptuous.Schema = Schema
-    voluptuous.Optional = lambda key: Marker("optional", key)
-    voluptuous.Required = lambda key: Marker("required", key)
+    def marker(kind, key, **kwargs):
+        result = Marker(kind, key)
+        for name, value in kwargs.items():
+            object.__setattr__(result, name, value)
+        return result
+
+    voluptuous.Optional = lambda key, **kwargs: marker("optional", key, **kwargs)
+    voluptuous.Required = lambda key, **kwargs: marker("required", key, **kwargs)
     voluptuous.All = lambda *validators: ("all", validators)
     voluptuous.Coerce = lambda value: ("coerce", value)
     voluptuous.Range = lambda **limits: ("range", tuple(limits.items()))
@@ -73,6 +79,7 @@ def _install_dependency_stubs() -> None:
     class ConfigEntry:
         def __init__(self, entry_id: str = "entry-1") -> None:
             self.entry_id = entry_id
+            self.unique_id = None
             self.version = 5
             self.data = {}
             self.reauth_requests = 0
@@ -92,11 +99,20 @@ def _install_dependency_stubs() -> None:
         def _abort_if_unique_id_configured(self) -> None:
             pass
 
+        def _async_current_entries(self):
+            return self.hass.config_entries.entries
+
+        def async_abort(self, *, reason):
+            return {"type": "abort", "reason": reason}
+
         def async_create_entry(self, *, title, data):
             return {"title": title, "data": data}
 
-        def async_show_form(self, *, step_id, data_schema, errors):
-            return {"type": "form", "step_id": step_id, "data_schema": data_schema, "errors": errors}
+        def async_show_form(self, *, step_id, data_schema, errors, **kwargs):
+            return {"type": "form", "step_id": step_id, "data_schema": data_schema, "errors": errors, **kwargs}
+
+        def async_show_menu(self, *, step_id, menu_options):
+            return {"type": "menu", "step_id": step_id, "menu_options": menu_options}
 
         def _get_reauth_entry(self):
             return self.reauth_entry
@@ -112,7 +128,14 @@ def _install_dependency_stubs() -> None:
 
     config_entries.ConfigFlow = ConfigFlow
     homeassistant.config_entries = config_entries
-    _module("homeassistant.data_entry_flow").FlowResult = dict
+    flow_module = _module("homeassistant.data_entry_flow")
+    flow_module.FlowResult = dict
+
+    class Section:
+        def __init__(self, schema, options):
+            self.schema, self.options = schema, options
+
+    flow_module.section = Section
 
     const = _module("homeassistant.const")
     const.ATTR_DEVICE_ID = "device_id"
@@ -385,6 +408,7 @@ class FakeHass:
 
 class FakeConfigEntries:
     def __init__(self):
+        self.entries = []
         self.updates = []
         self.reloads = []
         self.forwards = []
@@ -458,6 +482,8 @@ class PlatformSmokeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(identities[0], entries[0].data["device_guid"])
 
     async def test_config_flow_saves_the_identity_used_for_login(self) -> None:
+        from test_auth_profile import PROFILE
+
         identities = []
 
         async def accept_login(api):
@@ -466,17 +492,23 @@ class PlatformSmokeTests(unittest.IsolatedAsyncioTestCase):
             return {}
 
         credentials = {"email": "test@example.invalid", "password": "test-password"}
-        with patch.object(config_flow.ZentralyApi, "authenticate", accept_login):
+        account = {"numStatus": 0, "ioData": {"ioUser": {
+            "ioDCModel": {"ivlngUser": 42, "ivstrUserEmail": credentials["email"]}, "coUbications": [],
+        }}}
+        with patch.object(config_flow.ZentralyApi, "authenticate", accept_login), \
+                patch.object(config_flow.ZentralyApi, "get_user_data", return_value=account):
             for _ in range(2):
                 flow = config_flow.ZentralyConfigFlow()
                 flow.hass = FakeHass("new-entry", FakeCoordinator([]))
                 result = await flow.async_step_user(credentials)
+                self.assertEqual("auth_profile", result["step_id"])
+                result = await flow.async_step_auth_profile(PROFILE | {"firebase_token": "synthetic-fcm"})
                 self.assertEqual(identities[-1], result["data"]["device_guid"])
                 self.assertEqual(credentials["email"], result["data"]["email"])
                 self.assertEqual(credentials["password"], result["data"]["password"])
                 self.assertEqual("synthetic-token", result["data"]["token"])
                 self.assertEqual(42, result["data"]["user_id"])
-                self.assertEqual(identities[-1], result["data"]["firebase_token"])
+                self.assertEqual("synthetic-fcm", result["data"]["firebase_token"])
         self.assertNotEqual(identities[0], identities[1])
 
     async def test_all_platforms_import_and_setup_expected_entities(self) -> None:

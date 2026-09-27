@@ -58,10 +58,47 @@ validation. To install one, enable prereleases for this repository in HACS. See
 2. Click **+ Add Integration**
 3. Search for "Zentraly"
 4. Enter the email and password you use in the Zentraly mobile app
+5. Complete the Android authentication profile, then submit **Sign in and save**
 
-Some accounts may not be able to sign in with email and password. See
-[Authentication troubleshooting](#authentication-issues) if Home Assistant
-requests reauthentication.
+The profile form is a candidate feature, verified offline. A live login with a
+reconstructed profile still needs validation; it is not yet a guarantee of
+successful authentication. The previous successful local control reused an
+original header captured from the Android app.
+
+To edit these values later, open this integration's **Reconfigure** menu and
+choose **Credentials and Android profile**. The configured account stays fixed.
+Opening or cancelling the form makes no login request. Submitting the final
+form attempts one login, checks the account and inventory, then saves the
+credentials, profile and session together and reloads the existing entry.
+A failed check leaves the local configuration unchanged, but a successful login
+on Zentraly's server may already have affected another session.
+
+Use the installation ID (Android ID/GUID), Firebase messaging token (FCM), app
+version, phone brand/model, Android **API level** (an integer, not the Android
+marketing version), language and country from your Android app. These values
+can be identified in its mobile authentication payload; the app's phone settings
+may show some metadata, but generally do not expose the FCM token or app-specific
+Android ID. Obtaining those two values requires a separate local inspection of
+your own app; this integration does not capture them. Enter them only in HA,
+never in issues, chats or shared logs. User-Agent is an advanced editable field.
+
+HA generates the request encryption, timestamp, random value and counter. For
+new entries only, it can generate a persistent installation ID if left empty;
+acceptance of a generated ID has **not** been confirmed. It cannot generate or
+renew FCM tokens: if that value stops working, obtain a fresh one from the app
+and edit the profile. Do not substitute the GUID for an FCM token.
+
+Available passwords, FCM tokens and GUIDs appear as **•••••••• — configured**.
+Expand **Change** to show an empty replacement field; leaving it empty retains
+the configured value (or one entered earlier in the same flow). The indicator
+is only a label: the real secret is never prefilled or sent to the browser.
+Missing secrets have an empty required field. Non-secret profile fields show
+their saved values. HA stores
+these values in its config entry; masking is not encryption, so protect HA and
+its backups. Restarts reuse the saved session without a new profile login.
+
+**Import an existing session** remains available in Reconfigure and reauth;
+see [Authentication troubleshooting](#authentication-issues).
 
 ## Entities Created
 
@@ -106,7 +143,8 @@ retried.
 
 Home Assistant reuses a saved session. Password-only sign-in may be rejected for
 some accounts. If an expired session does not trigger a reauthentication prompt,
-open the Zentraly integration entry menu and choose **Reconfigure**. The masked
+open the Zentraly integration entry menu and choose **Reconfigure** →
+**Import an existing session**. The masked
 session field accepts a JSON object with `token`, `user_id` (a positive integer),
 `firebase_token` and `device_guid` for the same Zentraly account. The account is
 validated before the existing entry is updated. The integration cannot obtain a

@@ -104,6 +104,7 @@ class ReauthDraftTests(unittest.IsolatedAsyncioTestCase):
         other_store = smoke.advanced.AdvancedDraftStore()
         self.hass.data["zentraly"][other_entry.entry_id] = {"drafts": other_store}
         self.flow.reauth_entry = other_entry
+        await self.flow.async_step_reauth(other_entry.data)
         await self.reauth()
         await integration.async_remove_entry(self.hass, self.entry)
         self.assertEqual({other_entry.entry_id: other_store}, self.hass.data[PENDING])

@@ -5,6 +5,7 @@ import asyncio
 import base64
 import json
 import logging
+import re
 import secrets
 import time
 import uuid
@@ -15,6 +16,7 @@ from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from .const import (
+    AUTH_PROFILE_FIELDS,
     API_BASE_URL,
     API_FIREBASE_IV,
     API_FIREBASE_KEY,
@@ -67,6 +69,28 @@ class ZentralyAuthError(ZentralyApiError):
         self.confirmed_state: dict[str, Any] = {}
 
 
+def validate_auth_profile(value: Any) -> dict[str, Any]:
+    """Validate stored and submitted profiles without exposing their contents."""
+    if not isinstance(value, dict) or value.keys() != AUTH_PROFILE_FIELDS.keys() | {"user_agent"}:
+        raise ValueError("Invalid Android profile")
+    profile = dict(value)
+    for key in AUTH_PROFILE_FIELDS.keys() | {"user_agent"}:
+        field = profile[key]
+        if key in ("mobile_os", "mobile_os_version"):
+            if type(field) is not int or field <= 0 or (key == "mobile_os" and field != 1):
+                raise ValueError("Invalid Android profile")
+        elif (not isinstance(field, str) or not field.strip() or len(field) > 1024
+              or any(ord(char) < 32 or ord(char) == 127 for char in field)):
+            raise ValueError("Invalid Android profile")
+    profile["language"] = profile["language"].strip().lower()
+    profile["country"] = profile["country"].strip().upper()
+    if (not re.fullmatch(r"[a-z]{2,3}", profile["language"])
+            or not re.fullmatch(r"[A-Z]{2}", profile["country"])
+            or not profile["user_agent"].isascii()):
+        raise ValueError("Invalid Android profile")
+    return profile
+
+
 def command_device_id(device: dict[str, Any]) -> str:
     """Return the IoT Hub command target for a Zentraly device."""
     return (
@@ -89,6 +113,7 @@ class ZentralyApi:
         user_id: int | None = None,
         firebase_token: str | None = None,
         local_client: ZentralyLocalClient | None = None,
+        auth_profile: dict[str, Any] | None = None,
     ) -> None:
         """Initialize the API client."""
         self._email = email
@@ -100,6 +125,7 @@ class ZentralyApi:
         self._close_session = False
         self._device_guid = device_guid or str(uuid.uuid4()).upper()
         self._firebase_token = firebase_token
+        self._auth_profile = validate_auth_profile(auth_profile) if auth_profile is not None else None
         self._request_counter = 0
         self._rid = 0
         self._local_keys: dict[str, str] = {}
@@ -136,6 +162,8 @@ class ZentralyApi:
             "ivstrUserLanguage": "es",
             "ivstrUserCountry": "AR",
         }
+        if self._auth_profile is not None:
+            firebase_data.update({wire: self._auth_profile[key] for key, wire in AUTH_PROFILE_FIELDS.items()})
         encoded_data = base64.b64encode(
             json.dumps(firebase_data, separators=(",", ":")).encode()
         ).decode()
@@ -162,7 +190,7 @@ class ZentralyApi:
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "User-Agent": "zentralyRN/420",
+            "User-Agent": self._auth_profile["user_agent"] if self._auth_profile else "zentralyRN/420",
             "Firebase": self._generate_firebase_header(),
         }
 
@@ -262,7 +290,16 @@ class ZentralyApi:
     async def get_devices(self) -> list[dict[str, Any]]:
         """Get list of Zentraly devices."""
         data = await self.get_user_data()
+        devices = self.parse_devices(data)
+        await asyncio.gather(*(
+            self._refresh_device_config(device)
+            for device in devices
+            if device.get("device_type") == DEVICE_TYPE_THERMOSTAT
+        ))
+        return devices
 
+    def parse_devices(self, data: dict[str, Any]) -> list[dict[str, Any]]:
+        """Validate an /App inventory without contacting individual devices."""
         devices = []
         local_keys: dict[str, str] = {}
         io_data = data.get("ioData", {})
@@ -393,11 +430,6 @@ class ZentralyApi:
 
         # Commit the account's key map only after validating the entire inventory.
         self._local_keys = local_keys
-        await asyncio.gather(*(
-            self._refresh_device_config(device)
-            for device in devices
-            if device.get("device_type") == DEVICE_TYPE_THERMOSTAT
-        ))
         return devices
 
     async def _refresh_device_config(self, device: dict[str, Any]) -> None:

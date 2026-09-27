@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.1.3 — editable Android authentication profile (candidate)
+
+- Show configured secrets as masked indicators with expandable Change fields;
+  keep actual secrets on the server and preserve them when replacements are empty.
+- Add credentials and Android profile forms to setup, Reconfigure and reauth.
+  Validate one explicit login and the account inventory before saving together.
+- Persist the profile and session across restarts, preserving existing entries
+  and the session-import recovery path. Existing entries without a profile keep
+  their previous behavior; no automatic renewal is added.
+- Offline validation only: a reconstructed profile still needs a controlled
+  live login before release acceptance. Firebase tokens must be obtained from
+  the Android app and are not generated or renewed by the integration.
+
 ## 1.1.2 — manual session renewal
 
 - Add Home Assistant's Reconfigure action to replace an expired Zentraly app
