@@ -257,6 +257,83 @@ class ThermostatAdvancedConfirmationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(0, coordinator.refresh_count)
 
 
+class BoilerWriteResponseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_device_status_error_is_resolved_by_readback_without_rewriting(self) -> None:
+        key = advanced.BOILER_HEATING_TEMPERATURE
+        device = {
+            "serial": "CHILD",
+            "parent_serial": "PARENT",
+            "mac": "AA:BB:CC:DD:EE:FF",
+            "endpoint_id": 1,
+            "device_type": 17,
+        }
+        coordinator = FakeCoordinator(device)
+        store = advanced.AdvancedDraftStore()
+        store.set("CHILD", key, 75.0)
+
+        class AppliedThenRejectedApi(FakeApi):
+            async def send_write_attr_command(self, *args, **kwargs) -> dict:
+                self.writes.append((args, kwargs))
+                self.state = {key: 75.0}
+                raise api_module.ZentralyApiError(
+                    "Command failed: device status 404"
+                )
+
+        api = AppliedThenRejectedApi(state={key: 76.0})
+
+        result = await advanced.async_apply_boiler_advanced(
+            api, coordinator, store, device, {key: 75.0}, {key}
+        )
+
+        self.assertEqual(1, len(api.writes))
+        self.assertEqual(1, len(api.reads))
+        self.assertEqual("PARENT", api.writes[0][0][0])
+        self.assertEqual("PARENT", api.reads[0][0])
+        self.assertTrue(result.wrote)
+        self.assertEqual({key}, result.confirmed_keys)
+        self.assertEqual(set(), store.dirty_keys("CHILD"))
+        self.assertEqual(75.0, coordinator.data[0][key])
+
+    async def test_unconfirmed_write_error_preserves_draft_after_one_read_retry(self) -> None:
+        key = advanced.BOILER_HEATING_TEMPERATURE
+        device = {"serial": "CHILD", "parent_serial": "PARENT", "device_type": 17}
+        coordinator = FakeCoordinator(device)
+        store = advanced.AdvancedDraftStore()
+        store.set("CHILD", key, 75.0)
+        api = FakeApi(
+            state={key: 76.0},
+            write_error=api_module.ZentralyApiError("device status 404"),
+        )
+
+        with patch("asyncio.sleep", new_callable=AsyncMock) as sleep:
+            with self.assertRaisesRegex(api_module.ZentralyApiError, "404"):
+                await advanced.async_apply_boiler_advanced(
+                    api, coordinator, store, device, {key: 75.0}, {key}
+                )
+
+        self.assertEqual(1, len(api.writes))
+        self.assertEqual(2, len(api.reads))
+        sleep.assert_awaited_once_with(1)
+        self.assertEqual({key}, store.dirty_keys("CHILD"))
+
+    async def test_auth_write_error_does_not_attempt_readback(self) -> None:
+        key = advanced.BOILER_HEATING_TEMPERATURE
+        device = {"serial": "CHILD", "parent_serial": "PARENT", "device_type": 17}
+        coordinator = FakeCoordinator(device)
+        store = advanced.AdvancedDraftStore()
+        store.set("CHILD", key, 75.0)
+        api = FakeApi(write_error=api_module.ZentralyAuthError("expired"))
+
+        with self.assertRaises(api_module.ZentralyAuthError):
+            await advanced.async_apply_boiler_advanced(
+                api, coordinator, store, device, {key: 75.0}, {key}
+            )
+
+        self.assertEqual(1, len(api.writes))
+        self.assertEqual([], api.reads)
+        self.assertEqual({key}, store.dirty_keys("CHILD"))
+
+
 class AdvancedAttributeBuilderTests(unittest.TestCase):
     """Keep the already captured advanced attribute mappings stable."""
 

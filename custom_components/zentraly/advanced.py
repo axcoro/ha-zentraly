@@ -387,11 +387,15 @@ async def async_apply_boiler_advanced(
     device_serial = command_device_id(device)
     route = "parent" if device_serial != device["serial"] else "child"
     endpoint_id = device.get("endpoint_id") or ZTTIN01_DEFAULT_ENDPOINT
+    attempted_keys: set[str] = set()
+    written_keys: set[str] = set()
+    write_error: ZentralyApiError | None = None
     try:
         for cluster, attrs in attrs_by_cluster.items():
             fields = sorted(
                 key for key in applied_keys if BOILER_KEY_TO_ATTR[key][0] == cluster
             )
+            attempted_keys.update(fields)
             attr_ids = [attr["id"] for attr in attrs]
             _LOGGER.debug(
                 "Boiler apply write starting: cluster=%s fields=%s attrs=%s route=%s",
@@ -416,13 +420,19 @@ async def async_apply_boiler_advanced(
                     fields,
                     type(err).__name__,
                 )
+                if isinstance(err, ZentralyAuthError):
+                    raise
+                if isinstance(err, ZentralyApiError):
+                    write_error = err
+                    break
                 raise
+            written_keys.update(fields)
             _LOGGER.debug(
                 "Boiler apply write response received: cluster=%s fields=%s",
                 cluster,
                 fields,
             )
-    except (ZentralyApiError, ValueError):
+    except (ZentralyAuthError, ValueError):
         result = ApplyResult(
             wrote=False,
             applied_keys=applied_keys,
@@ -432,7 +442,11 @@ async def async_apply_boiler_advanced(
         _store_apply_result(store, coordinator, device["serial"], result)
         raise
 
-    confirmation_reads = _boiler_confirmation_reads(attrs_by_cluster)
+    confirmation_reads = (
+        _boiler_confirmation_reads(attrs_by_cluster)
+        if write_error is None
+        else _boiler_confirmation_reads_for_keys(attempted_keys)
+    )
     confirmed_state: dict[str, Any] = {}
     auth_error = None
     try:
@@ -443,10 +457,10 @@ async def async_apply_boiler_advanced(
             endpoint_id,
             confirmation_reads,
         )
-        confirmed_keys = _confirmed_boiler_keys(values, applied_keys, confirmed_state)
+        confirmed_keys = _confirmed_boiler_keys(values, attempted_keys, confirmed_state)
 
-        if confirmed_keys != applied_keys and confirmation_error is None:
-            retry_keys = applied_keys - confirmed_keys
+        if confirmed_keys != attempted_keys and confirmation_error is None:
+            retry_keys = attempted_keys - confirmed_keys
             _LOGGER.debug(
                 "Boiler apply repeating confirmation read only: fields=%s",
                 sorted(retry_keys),
@@ -457,14 +471,14 @@ async def async_apply_boiler_advanced(
                 device_serial,
                 device.get("mac"),
                 endpoint_id,
-                _boiler_confirmation_reads_for_keys(applied_keys - confirmed_keys),
+                _boiler_confirmation_reads_for_keys(attempted_keys - confirmed_keys),
             )
             confirmed_state.update(retry_state)
-            confirmed_keys = _confirmed_boiler_keys(values, applied_keys, confirmed_state)
+            confirmed_keys = _confirmed_boiler_keys(values, attempted_keys, confirmed_state)
 
     except ZentralyAuthError as err:
         confirmed_state.update(err.confirmed_state)
-        confirmed_keys = _confirmed_boiler_keys(values, applied_keys, confirmed_state)
+        confirmed_keys = _confirmed_boiler_keys(values, attempted_keys, confirmed_state)
         auth_error = err
 
     unconfirmed_keys = applied_keys - confirmed_keys
@@ -479,7 +493,7 @@ async def async_apply_boiler_advanced(
         },
     )
     result = ApplyResult(
-        wrote=True,
+        wrote=write_error is None or bool(written_keys or confirmed_keys),
         applied_keys=applied_keys,
         confirmed_keys=confirmed_keys,
         unconfirmed_keys=unconfirmed_keys,
@@ -495,6 +509,9 @@ async def async_apply_boiler_advanced(
 
     if auth_error is not None:
         raise auth_error
+
+    if write_error is not None and unconfirmed_keys:
+        raise write_error
 
     if unconfirmed_keys:
         keys = ", ".join(sorted(unconfirmed_keys))
