@@ -15,6 +15,11 @@
         "data": {
           "session": "Sesión de la app oficial (JSON)"
         }
+      },
+      "reconfigure": {
+        "title": "Renovar sesión Zentraly",
+        "description": "Introduce aquí, en Home Assistant, el objeto JSON de sesión de la app oficial con token, user_id, firebase_token y device_guid. Debe pertenecer a la misma cuenta. Nunca pegues la sesión en un chat ni la compartas en logs. Obtener la sesión queda fuera de esta integración.",
+        "data": {"session": "Sesión de la app oficial (JSON)"}
       }
     },
     "error": {
@@ -25,7 +30,8 @@
     },
     "abort": {
       "already_configured": "La cuenta ya esta configurada",
-      "reauth_successful": "Sesión renovada correctamente."
+      "reauth_successful": "Sesión renovada correctamente.",
+      "reconfigure_successful": "Sesión renovada correctamente."
     }
   },
   "entity": {

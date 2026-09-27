@@ -101,11 +101,14 @@ def _install_dependency_stubs() -> None:
         def _get_reauth_entry(self):
             return self.reauth_entry
 
+        def _get_reconfigure_entry(self):
+            return self.reconfigure_entry
+
         def async_update_reload_and_abort(self, entry, *, data_updates):
             # HA callback updates synchronously and schedules one reload.
             self.hass.config_entries.async_update_entry(entry, data={**entry.data, **data_updates})
             self.hass.config_entries.reloads.append(entry.entry_id)
-            return {"type": "abort", "reason": "reauth_successful"}
+            return {"type": "abort", "reason": "reconfigure_successful" if hasattr(self, "reconfigure_entry") else "reauth_successful"}
 
     config_entries.ConfigFlow = ConfigFlow
     homeassistant.config_entries = config_entries
