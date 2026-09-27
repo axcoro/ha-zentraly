@@ -3,10 +3,19 @@
     "step": {
       "user": {
         "title": "Zentraly Account",
-        "description": "Enter your Zentraly app credentials",
+        "description": "Enter your Zentraly credentials. The next step collects your Android profile; no login is made yet.",
         "data": {
           "email": "[%key:common::config_flow::data::email%]",
           "password": "[%key:common::config_flow::data::password%]"
+        },
+        "sections": {
+          "change_password": {
+            "name": "•••••••• — Password: configured · Change",
+            "description": "The value is stored and is not sent to the browser. Leave the field empty to keep it.",
+            "data": {
+              "password": "New value"
+            }
+          }
         }
       },
       "reauth_confirm": {
@@ -17,16 +26,84 @@
         }
       },
       "reconfigure": {
-        "title": "Renew Zentraly session",
-        "description": "Enter the official app session JSON here in Home Assistant, with token, user_id, firebase_token and device_guid. It must belong to the same account. Never paste a session into a chat or share it in logs. Obtaining the session is outside this integration.",
-        "data": {"session": "Official app session (JSON)"}
+        "title": "Zentraly authentication",
+        "description": "Choose how to renew this account session. Opening these options does not sign in.",
+        "menu_options": {
+          "credentials": "Credentials and Android profile",
+          "reauth_confirm": "Import an existing session"
+        }
+      },
+      "reauth": {
+        "title": "Zentraly authentication",
+        "description": "Choose how to renew this account session. Opening these options does not sign in.",
+        "menu_options": {
+          "credentials": "Credentials and Android profile",
+          "reauth_confirm": "Import an existing session"
+        }
+      },
+      "credentials": {
+        "title": "Configured account credentials",
+        "description": "The configured account is kept. A stored password is shown as configured: expand Change to replace it. Continuing does not sign in.",
+        "data": {
+          "password": "Password"
+        },
+        "sections": {
+          "change_password": {
+            "name": "•••••••• — Password: configured · Change",
+            "description": "The value is stored and is not sent to the browser. Leave the field empty to keep it.",
+            "data": {
+              "password": "New value"
+            }
+          }
+        }
+      },
+      "auth_profile": {
+        "title": "Sign in and save",
+        "description": "Submitting attempts one login and verifies the account before saving. It may affect other Zentraly sessions. Use your Android app data; HA does not obtain or renew Firebase tokens. Available secrets are shown as •••••••• — configured. Expand Change to replace them; leaving the input empty keeps the value. On new setup, an empty GUID uses a generated identifier whose acceptance is not yet validated. Login with this reconstructed profile still requires live validation.",
+        "data": {
+          "device_guid": "Installation identifier (GUID)",
+          "firebase_token": "App Firebase token (FCM)",
+          "app_version": "Zentraly app version",
+          "mobile_os": "Operating system (1 = Android)",
+          "mobile_trade": "Phone brand",
+          "mobile_model": "Phone model",
+          "mobile_os_version": "Android API level (integer)",
+          "language": "Language code",
+          "country": "Country code (two letters)",
+          "user_agent": "User-Agent (advanced)"
+        },
+        "data_description": {
+          "device_guid": "Android ID used by the app, not a session token.",
+          "mobile_os_version": "For example API 33, not the marketing version Android 13.",
+          "firebase_token": "FCM value captured from your app; different from the Zentraly session token."
+        },
+        "sections": {
+          "change_device_guid": {
+            "name": "•••••••• — GUID: configured · Change",
+            "description": "The value is stored and is not sent to the browser. Leave the field empty to keep it.",
+            "data": {
+              "device_guid": "New value"
+            }
+          },
+          "change_firebase_token": {
+            "name": "•••••••• — Firebase token: configured · Change",
+            "description": "The value is stored and is not sent to the browser. Leave the field empty to keep it.",
+            "data": {
+              "firebase_token": "New value"
+            }
+          }
+        }
       }
     },
     "error": {
-      "cannot_connect": "Unable to connect to Zentraly. The saved session has not been replaced.",
+      "cannot_connect": "Could not validate the session. Local data was not changed; if login completed, it may have affected other sessions.",
       "invalid_auth": "Zentraly rejected the credentials or session.",
       "invalid_session": "Incomplete or invalid session. Check all four fields and their types.",
-      "wrong_account": "The session could not be verified as belonging to the same account."
+      "wrong_account": "The session could not be verified as belonging to the same account.",
+      "invalid_credentials": "Check email and password; they cannot be empty or contain control characters.",
+      "invalid_profile": "Invalid or incomplete Android profile. Check field types and secrets. If the saved profile is damaged, correct it in Credentials and Android profile.",
+      "auth_in_progress": "Authentication is already in progress for this account. Wait for it to finish.",
+      "configuration_changed": "The configuration changed while this form was open. Close it and open Reconfigure again."
     },
     "abort": {
       "already_configured": "[%key:common::config_flow::abort::already_configured_account%]",

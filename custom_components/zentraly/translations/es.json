@@ -3,10 +3,19 @@
     "step": {
       "user": {
         "title": "Cuenta Zentraly",
-        "description": "Ingresa tus credenciales de la app Zentraly",
+        "description": "Introducí tus credenciales de Zentraly. En el siguiente paso completarás el perfil Android; todavía no se realiza ningún login.",
         "data": {
           "email": "Email",
           "password": "Contrasena"
+        },
+        "sections": {
+          "change_password": {
+            "name": "•••••••• — Contraseña: configurado · Cambiar",
+            "description": "El valor está guardado y no se envía al navegador. Dejá el campo vacío para conservarlo.",
+            "data": {
+              "password": "Nuevo valor"
+            }
+          }
         }
       },
       "reauth_confirm": {
@@ -17,16 +26,84 @@
         }
       },
       "reconfigure": {
-        "title": "Renovar sesión Zentraly",
-        "description": "Introduce aquí, en Home Assistant, el objeto JSON de sesión de la app oficial con token, user_id, firebase_token y device_guid. Debe pertenecer a la misma cuenta. Nunca pegues la sesión en un chat ni la compartas en logs. Obtener la sesión queda fuera de esta integración.",
-        "data": {"session": "Sesión de la app oficial (JSON)"}
+        "title": "Autenticación de Zentraly",
+        "description": "Elegí cómo renovar la sesión de esta cuenta. Abrir estas opciones no inicia sesión.",
+        "menu_options": {
+          "credentials": "Credenciales y perfil Android",
+          "reauth_confirm": "Importar sesión existente"
+        }
+      },
+      "reauth": {
+        "title": "Autenticación de Zentraly",
+        "description": "Elegí cómo renovar la sesión de esta cuenta. Abrir estas opciones no inicia sesión.",
+        "menu_options": {
+          "credentials": "Credenciales y perfil Android",
+          "reauth_confirm": "Importar sesión existente"
+        }
+      },
+      "credentials": {
+        "title": "Credenciales de la cuenta configurada",
+        "description": "Se conserva la cuenta de esta integración. Si hay contraseña, aparece como configurada: abrí Cambiar para reemplazarla. Continuar no inicia sesión.",
+        "data": {
+          "password": "Contraseña"
+        },
+        "sections": {
+          "change_password": {
+            "name": "•••••••• — Contraseña: configurado · Cambiar",
+            "description": "El valor está guardado y no se envía al navegador. Dejá el campo vacío para conservarlo.",
+            "data": {
+              "password": "Nuevo valor"
+            }
+          }
+        }
+      },
+      "auth_profile": {
+        "title": "Iniciar sesión y guardar",
+        "description": "Al enviar se intentará un login y se validará la cuenta antes de guardar. Puede afectar otras sesiones de Zentraly. Usá los datos de tu app Android; HA no obtiene ni renueva el token Firebase. Los secretos disponibles se muestran como •••••••• — configurado. Abrí Cambiar para reemplazarlos; dejar el campo vacío conserva el valor. En un alta nueva, un GUID vacío usa un identificador generado cuya aceptación aún no está validada. El login con este perfil reconstruido está pendiente de validación real.",
+        "data": {
+          "device_guid": "Identificador de instalación (GUID)",
+          "firebase_token": "Token Firebase (FCM) de la app",
+          "app_version": "Versión de Zentraly",
+          "mobile_os": "Sistema operativo (1 = Android)",
+          "mobile_trade": "Marca del teléfono",
+          "mobile_model": "Modelo del teléfono",
+          "mobile_os_version": "Nivel de API Android (entero)",
+          "language": "Código de idioma",
+          "country": "Código de país (dos letras)",
+          "user_agent": "User-Agent (avanzado)"
+        },
+        "data_description": {
+          "device_guid": "Android ID usado por la app, no un token de sesión.",
+          "mobile_os_version": "Por ejemplo, API 33; no la versión comercial Android 13.",
+          "firebase_token": "Valor FCM capturado de tu app; distinto del token de sesión Zentraly."
+        },
+        "sections": {
+          "change_device_guid": {
+            "name": "•••••••• — GUID: configurado · Cambiar",
+            "description": "El valor está guardado y no se envía al navegador. Dejá el campo vacío para conservarlo.",
+            "data": {
+              "device_guid": "Nuevo valor"
+            }
+          },
+          "change_firebase_token": {
+            "name": "•••••••• — Token Firebase: configurado · Cambiar",
+            "description": "El valor está guardado y no se envía al navegador. Dejá el campo vacío para conservarlo.",
+            "data": {
+              "firebase_token": "Nuevo valor"
+            }
+          }
+        }
       }
     },
     "error": {
-      "cannot_connect": "No se pudo conectar a Zentraly. La sesión guardada no se ha reemplazado.",
+      "cannot_connect": "No se pudo validar la sesión. Los datos locales no cambiaron; si el login llegó a completarse, puede haber afectado otras sesiones.",
       "invalid_auth": "Zentraly rechazó las credenciales o la sesión.",
       "invalid_session": "Sesión incompleta o inválida. Revisa los cuatro campos y sus tipos.",
-      "wrong_account": "No se pudo verificar que la sesión pertenezca a la misma cuenta."
+      "wrong_account": "No se pudo verificar que la sesión pertenezca a la misma cuenta.",
+      "invalid_credentials": "Revisá email y contraseña; no pueden estar vacíos ni contener caracteres de control.",
+      "invalid_profile": "Perfil Android inválido o incompleto. Revisá tipos, campos y secretos. Si el perfil guardado está dañado, corregilo en Credenciales y perfil Android.",
+      "auth_in_progress": "Ya hay una validación en curso para esta cuenta. Esperá a que termine.",
+      "configuration_changed": "La configuración cambió mientras este formulario estaba abierto. Cerralo y volvé a abrir Reconfigurar."
     },
     "abort": {
       "already_configured": "La cuenta ya esta configurada",

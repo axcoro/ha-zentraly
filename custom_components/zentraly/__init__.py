@@ -41,9 +41,10 @@ from .advanced import (
     async_apply_boiler_advanced,
     async_apply_thermostat_advanced,
 )
-from .api import ZentralyApi, ZentralyApiError, ZentralyAuthError, command_device_id
+from .api import ZentralyApi, ZentralyApiError, ZentralyAuthError, command_device_id, validate_auth_profile
 from .const import (
     BOILER_DEVICE_TYPES,
+    CONF_AUTH_PROFILE,
     CONF_DEVICE_GUID,
     CONF_FIREBASE_TOKEN,
     CONF_TOKEN,
@@ -111,6 +112,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     saved = dict(entry.data)
     has_token = CONF_TOKEN in saved
+    auth_profile = None
+    if CONF_AUTH_PROFILE in saved:
+        try:
+            auth_profile = validate_auth_profile(saved[CONF_AUTH_PROFILE])
+        except ValueError:
+            raise ConfigEntryAuthFailed("Invalid Zentraly profile; reconfigure authentication") from None
+        if not has_token:
+            raise ConfigEntryAuthFailed("No Zentraly session; manual authentication required")
     # An existing token must never trigger a password-login fallback. Validate the
     # original saved fields before constructor defaults can mask an incomplete import.
     if has_token and (
@@ -212,6 +221,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         user_id=saved.get(CONF_USER_ID),
         firebase_token=saved.get(CONF_FIREBASE_TOKEN),
         local_client=local_client,
+        auth_profile=auth_profile,
     )
 
     hass.data.setdefault(DOMAIN, {})
