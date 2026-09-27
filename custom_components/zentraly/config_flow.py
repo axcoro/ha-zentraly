@@ -68,12 +68,23 @@ class ZentralyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Request a replacement official-app session locally in Home Assistant."""
         return await self.async_step_reauth_confirm()
 
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None,
+    ) -> FlowResult:
+        """Allow renewing the saved session from the integration menu."""
+        return await self._async_step_session(user_input, reconfigure=True)
+
     async def async_step_reauth_confirm(
         self, user_input: dict[str, Any] | None = None,
     ) -> FlowResult:
         """Validate identity read-only before replacing any saved session field."""
+        return await self._async_step_session(user_input, reconfigure=False)
+
+    async def _async_step_session(
+        self, user_input: dict[str, Any] | None, *, reconfigure: bool,
+    ) -> FlowResult:
         errors: dict[str, str] = {}
-        entry = self._get_reauth_entry()
+        entry = self._get_reconfigure_entry() if reconfigure else self._get_reauth_entry()
         if user_input is not None:
             try:
                 supplied = json.loads(user_input["session"])
@@ -124,5 +135,6 @@ class ZentralyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         return self.async_update_reload_and_abort(entry, data_updates=session_data)
         # Never put submitted data in defaults, placeholders or exception logs.
         return self.async_show_form(
-            step_id="reauth_confirm", data_schema=STEP_REAUTH_DATA_SCHEMA, errors=errors,
+            step_id="reconfigure" if reconfigure else "reauth_confirm",
+            data_schema=STEP_REAUTH_DATA_SCHEMA, errors=errors,
         )

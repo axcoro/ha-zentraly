@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.2 — manual session renewal
+
+- Add Home Assistant's Reconfigure action to replace an expired Zentraly app
+  session after verifying the same account, then reload the existing entry.
+
 ## 1.1.1 — README and release information, 2026-09-27
 
 - Clarify the supported product models, compatibility requirements and HACS
